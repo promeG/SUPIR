@@ -3,7 +3,7 @@ import os
 import gradio as gr
 from gradio_imageslider import ImageSlider
 import argparse
-from SUPIR.util import HWC3, upscale_image, fix_resize, convert_dtype
+from SUPIR.util import HWC3, upscale_image, fix_resize, convert_dtype, Tensor2PIL
 import numpy as np
 import torch
 from SUPIR.util import create_SUPIR_model, load_QF_ckpt
@@ -12,6 +12,7 @@ from llava.llava_agent import LLavaAgent
 from CKPT_PTH import LLAVA_MODEL_PATH
 import einops
 import copy
+import datetime
 import time
 
 parser = argparse.ArgumentParser()
@@ -112,9 +113,19 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
                                     use_linear_CFG=linear_CFG, use_linear_control_scale=linear_s_stage2,
                                     cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
 
+
     x_samples = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
         0, 255).astype(np.uint8)
     results = [x_samples[i] for i in range(num_samples)]
+
+    output_dir = os.path.join("outputs")
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    for i, result in enumerate(results):
+        timestamp = datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S_%f')[:-3]
+        save_path = os.path.join(output_dir, f'{timestamp}.png')
+        Image.fromarray(result).save(save_path)
 
     if args.log_history:
         os.makedirs(f'./history/{event_id[:5]}/{event_id[5:]}', exist_ok=True)
