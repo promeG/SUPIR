@@ -75,7 +75,7 @@ def llave_process(input_image, temperature, top_p, qs=None):
 
 def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,random_seed):
+                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,random_seed, progress=gr.Progress()):
     event_id = str(time.time_ns())
     event_dict = {'event_id': event_id, 'localtime': time.ctime(), 'prompt': prompt, 'a_prompt': a_prompt,
                   'n_prompt': n_prompt, 'num_samples': num_samples, 'upscale': upscale, 'edm_steps': edm_steps,
@@ -109,10 +109,17 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
     model.ae_dtype = convert_dtype(ae_dtype)
     model.model.dtype = convert_dtype(diff_dtype)
 
+    output_dir = os.path.join("outputs")
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
     all_results = []
+    counter = 1
+    progress(0 / num_images, desc="Generating images")
     for _ in range(num_images):
         if random_seed or num_images>1:
             seed = np.random.randint(0, 2147483647)
+        start_time = time.time()  # Track the start time
         samples = model.batchify_sample(LQ, captions, num_steps=edm_steps, restoration_scale=s_stage1, s_churn=s_churn,
                                         s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
                                         num_samples=num_samples, p_p=a_prompt, n_p=n_prompt, color_fix_type=color_fix_type,
@@ -122,16 +129,19 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
         x_samples = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
             0, 255).astype(np.uint8)
         results = [x_samples[i] for i in range(num_samples)]
+        image_generation_time = time.time() - start_time
+        desc=f"Generated image {counter}/{num_images} in {image_generation_time:.2f} seconds"
+        counter=counter+1
+        progress(counter / num_images, desc=desc)
+        print(desc)  # Print the progress
+        start_time = time.time()  # Reset the start time for the next image
+
+        for i, result in enumerate(results):
+            timestamp = datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S_%f')[:-3]
+            save_path = os.path.join(output_dir, f'{timestamp}.png')
+            Image.fromarray(result).save(save_path)
         all_results.extend(results)
 
-    output_dir = os.path.join("outputs")
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    for i, result in enumerate(all_results):
-        timestamp = datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S_%f')[:-3]
-        save_path = os.path.join(output_dir, f'{timestamp}.png')
-        Image.fromarray(result).save(save_path)
 
     if args.log_history:
         os.makedirs(f'./history/{event_id[:5]}/{event_id[5:]}', exist_ok=True)
@@ -141,7 +151,7 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
         Image.fromarray(input_image).save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
         for i, result in enumerate(all_results):
             Image.fromarray(result).save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
-    return [input_image] + all_results, event_id, 3, ''
+    return [input_image] + all_results, event_id, 3, '', seed
 
 def load_and_reset(param_setting):
     edm_steps = 50
@@ -313,7 +323,7 @@ with block:
     stage2_ips = [input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,num_images,random_seed]
-    diffusion_button.click(fn=stage2_process, inputs=stage2_ips, outputs=[result_gallery, event_id, fb_score, fb_text])
+    diffusion_button.click(fn=stage2_process, inputs=stage2_ips, outputs=[result_gallery, event_id, fb_score, fb_text, seed], show_progress=True, queue=True)
     restart_button.click(fn=load_and_reset, inputs=[param_setting],
                          outputs=[edm_steps, s_cfg, s_stage2, s_stage1, s_churn, s_noise, a_prompt, n_prompt,
                                   color_fix_type, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2])
