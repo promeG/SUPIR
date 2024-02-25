@@ -1,4 +1,5 @@
 import os
+from pickle import TRUE
 
 import gradio as gr
 from gradio_imageslider import ImageSlider
@@ -15,9 +16,10 @@ import copy
 import datetime
 import time
 
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1')
-parser.add_argument("--share", type=str, default=True)
+parser.add_argument("--share", type=str, default=False)
 parser.add_argument("--port", type=int, default='7860')
 parser.add_argument("--no_llava", action='store_true', default=True)
 parser.add_argument("--use_image_slider", action='store_true', default=False)
@@ -73,7 +75,7 @@ def llave_process(input_image, temperature, top_p, qs=None):
 
 def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select):
+                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,random_seed):
     event_id = str(time.time_ns())
     event_dict = {'event_id': event_id, 'localtime': time.ctime(), 'prompt': prompt, 'a_prompt': a_prompt,
                   'n_prompt': n_prompt, 'num_samples': num_samples, 'upscale': upscale, 'edm_steps': edm_steps,
@@ -107,22 +109,26 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
     model.ae_dtype = convert_dtype(ae_dtype)
     model.model.dtype = convert_dtype(diff_dtype)
 
-    samples = model.batchify_sample(LQ, captions, num_steps=edm_steps, restoration_scale=s_stage1, s_churn=s_churn,
-                                    s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
-                                    num_samples=num_samples, p_p=a_prompt, n_p=n_prompt, color_fix_type=color_fix_type,
-                                    use_linear_CFG=linear_CFG, use_linear_control_scale=linear_s_stage2,
-                                    cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
+    all_results = []
+    for _ in range(num_images):
+        if random_seed or num_images>1:
+            seed = np.random.randint(0, 2147483647)
+        samples = model.batchify_sample(LQ, captions, num_steps=edm_steps, restoration_scale=s_stage1, s_churn=s_churn,
+                                        s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
+                                        num_samples=num_samples, p_p=a_prompt, n_p=n_prompt, color_fix_type=color_fix_type,
+                                        use_linear_CFG=linear_CFG, use_linear_control_scale=linear_s_stage2,
+                                        cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
 
-
-    x_samples = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
-        0, 255).astype(np.uint8)
-    results = [x_samples[i] for i in range(num_samples)]
+        x_samples = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
+            0, 255).astype(np.uint8)
+        results = [x_samples[i] for i in range(num_samples)]
+        all_results.extend(results)
 
     output_dir = os.path.join("outputs")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    for i, result in enumerate(results):
+    for i, result in enumerate(all_results):
         timestamp = datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S_%f')[:-3]
         save_path = os.path.join(output_dir, f'{timestamp}.png')
         Image.fromarray(result).save(save_path)
@@ -133,9 +139,9 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
             f.write(str(event_dict))
         f.close()
         Image.fromarray(input_image).save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
-        for i, result in enumerate(results):
+        for i, result in enumerate(all_results):
             Image.fromarray(result).save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
-    return [input_image] + results, event_id, 3, ''
+    return [input_image] + all_results, event_id, 3, ''
 
 def load_and_reset(param_setting):
     edm_steps = 50
@@ -181,7 +187,7 @@ def submit_feedback(event_id, fb_score, fb_text):
 title_md = """
 # **SUPIR: Practicing Model Scaling for Photo-Realistic Image Restoration**
 
-⚠️SUPIR is still a research project under tested and is not yet a stable commercial product.
+1 Click Installer (auto download models as well) : https://www.patreon.com/posts/99176057
 
 [[Paper](https://arxiv.org/abs/2401.13627)] &emsp; [[Project Page](http://supir.xpixel.group/)] &emsp; [[How to play](https://github.com/Fanghua-Yu/SUPIR/blob/master/assets/DemoGuide.png)]
 """
@@ -214,54 +220,37 @@ with block:
             prompt = gr.Textbox(label="Prompt", value="")
             with gr.Accordion("Stage1 options", open=False):
                 gamma_correction = gr.Slider(label="Gamma Correction", minimum=0.1, maximum=2.0, value=1.0, step=0.1)
-            with gr.Accordion("LLaVA options", open=False):
-                temperature = gr.Slider(label="Temperature", minimum=0., maximum=1.0, value=0.2, step=0.1)
-                top_p = gr.Slider(label="Top P", minimum=0., maximum=1.0, value=0.7, step=0.1)
-                qs = gr.Textbox(label="Question", value="Describe this image and its style in a very detailed manner. "
-                                                        "The image is a realistic photography, not an art painting.")
-            with gr.Accordion("Stage2 options", open=False):
-                num_samples = gr.Slider(label="Num Samples", minimum=1, maximum=4 if not args.use_image_slider else 1
+
+            with gr.Accordion("Stage2 options", open=True):
+               with gr.Row():
+                  with gr.Column():
+                        num_images = gr.Slider(label="Number Of Images To Generate", minimum=1, maximum=200
                                         , value=1, step=1)
-                upscale = gr.Slider(label="Upscale", minimum=1, maximum=8, value=1, step=1)
-                edm_steps = gr.Slider(label="Steps", minimum=20, maximum=200, value=50, step=1)
-                s_cfg = gr.Slider(label="Text Guidance Scale", minimum=1.0, maximum=15.0, value=7.5, step=0.1)
-                s_stage2 = gr.Slider(label="Stage2 Guidance Strength", minimum=0., maximum=1., value=1., step=0.05)
-                s_stage1 = gr.Slider(label="Stage1 Guidance Strength", minimum=-1.0, maximum=6.0, value=-1.0, step=1.0)
-                seed = gr.Slider(label="Seed", minimum=-1, maximum=2147483647, step=1, randomize=True)
-                s_churn = gr.Slider(label="S-Churn", minimum=0, maximum=40, value=5, step=1)
-                s_noise = gr.Slider(label="S-Noise", minimum=1.0, maximum=1.1, value=1.003, step=0.001)
-                a_prompt = gr.Textbox(label="Default Positive Prompt",
-                                      value='Cinematic, High Contrast, highly detailed, taken using a Canon EOS R '
-                                            'camera, hyper detailed photo - realistic maximum detail, 32k, Color '
-                                            'Grading, ultra HD, extreme meticulous detailing, skin pore detailing, '
-                                            'hyper sharpness, perfect without deformations.')
-                n_prompt = gr.Textbox(label="Default Negative Prompt",
-                                      value='painting, oil painting, illustration, drawing, art, sketch, oil painting, '
-                                            'cartoon, CG Style, 3D render, unreal engine, blurring, dirty, messy, '
-                                            'worst quality, low quality, frames, watermark, signature, jpeg artifacts, '
-                                            'deformed, lowres, over-smooth')
-                with gr.Row():
-                    with gr.Column():
-                        linear_CFG = gr.Checkbox(label="Linear CFG", value=False)
-                        spt_linear_CFG = gr.Slider(label="CFG Start", minimum=1.0,
-                                                        maximum=9.0, value=1.0, step=0.5)
-                    with gr.Column():
-                        linear_s_stage2 = gr.Checkbox(label="Linear Stage2 Guidance", value=False)
-                        spt_linear_s_stage2 = gr.Slider(label="Guidance Start", minimum=0.,
-                                                        maximum=1., value=0., step=0.05)
-                with gr.Row():
-                    with gr.Column():
-                        diff_dtype = gr.Radio(['fp32', 'fp16', 'bf16'], label="Diffusion Data Type", value="fp16",
-                                              interactive=True)
-                    with gr.Column():
-                        ae_dtype = gr.Radio(['fp32', 'bf16'], label="Auto-Encoder Data Type", value="bf16",
-                                            interactive=True)
-                    with gr.Column():
-                        color_fix_type = gr.Radio(["None", "AdaIn", "Wavelet"], label="Color-Fix Type", value="Wavelet",
-                                                  interactive=True)
-                    with gr.Column():
-                        model_select = gr.Radio(["v0-Q", "v0-F"], label="Model Selection", value="v0-Q",
-                                                interactive=True)
+                        num_samples = gr.Slider(label="Batch Size", minimum=1, maximum=4 if not args.use_image_slider else 1
+                                        , value=1, step=1)
+                  with gr.Column():
+                    upscale = gr.Slider(label="Upscale", minimum=1, maximum=8, value=1, step=1)
+                    random_seed = gr.Checkbox(label="Randomize Seed", value=True)
+               with gr.Row():
+                    edm_steps = gr.Slider(label="Steps", minimum=20, maximum=200, value=50, step=1)
+                    s_cfg = gr.Slider(label="Text Guidance Scale", minimum=1.0, maximum=15.0, value=7.5, step=0.1)
+                    s_stage2 = gr.Slider(label="Stage2 Guidance Strength", minimum=0., maximum=1., value=1., step=0.05)
+                    s_stage1 = gr.Slider(label="Stage1 Guidance Strength", minimum=-1.0, maximum=6.0, value=-1.0, step=1.0)
+                    seed = gr.Slider(label="Seed", minimum=-1, maximum=2147483647, step=1, randomize=True)
+                    s_churn = gr.Slider(label="S-Churn", minimum=0, maximum=40, value=5, step=1)
+                    s_noise = gr.Slider(label="S-Noise", minimum=1.0, maximum=1.1, value=1.003, step=0.001)
+               with gr.Row():   
+                    a_prompt = gr.Textbox(label="Default Positive Prompt",
+                                          value='Cinematic, High Contrast, highly detailed, taken using a Canon EOS R '
+                                                'camera, hyper detailed photo - realistic maximum detail, 32k, Color '
+                                                'Grading, ultra HD, extreme meticulous detailing, skin pore detailing, '
+                                                'hyper sharpness, perfect without deformations.')
+                    n_prompt = gr.Textbox(label="Default Negative Prompt",
+                                          value='painting, oil painting, illustration, drawing, art, sketch, oil painting, '
+                                                'cartoon, CG Style, 3D render, unreal engine, blurring, dirty, messy, '
+                                                'worst quality, low quality, frames, watermark, signature, jpeg artifacts, '
+                                                'deformed, lowres, over-smooth')
+
 
         with gr.Column():
             gr.Markdown("<center>Stage2 Output</center>")
@@ -282,7 +271,34 @@ with block:
                                                value="Quality")
                 with gr.Column():
                     restart_button = gr.Button(value="Reset Param", scale=2)
-            with gr.Accordion("Feedback", open=True):
+            with gr.Row():
+                with gr.Column():
+                    linear_CFG = gr.Checkbox(label="Linear CFG", value=False)
+                    spt_linear_CFG = gr.Slider(label="CFG Start", minimum=1.0,
+                                                    maximum=9.0, value=1.0, step=0.5)
+                with gr.Column():
+                    linear_s_stage2 = gr.Checkbox(label="Linear Stage2 Guidance", value=False)
+                    spt_linear_s_stage2 = gr.Slider(label="Guidance Start", minimum=0.,
+                                                    maximum=1., value=0., step=0.05)
+            with gr.Row():
+                with gr.Column():
+                    diff_dtype = gr.Radio(['fp32', 'fp16', 'bf16'], label="Diffusion Data Type", value="fp16",
+                                            interactive=True)
+                with gr.Column():
+                    ae_dtype = gr.Radio(['fp32', 'bf16'], label="Auto-Encoder Data Type", value="bf16",
+                                        interactive=True)
+                with gr.Column():
+                    color_fix_type = gr.Radio(["None", "AdaIn", "Wavelet"], label="Color-Fix Type", value="Wavelet",
+                                                interactive=True)
+                with gr.Column():
+                    model_select = gr.Radio(["v0-Q", "v0-F"], label="Model Selection", value="v0-Q",
+                                            interactive=True)
+            with gr.Accordion("LLaVA options", open=False):
+                temperature = gr.Slider(label="Temperature", minimum=0., maximum=1.0, value=0.2, step=0.1)
+                top_p = gr.Slider(label="Top P", minimum=0., maximum=1.0, value=0.7, step=0.1)
+                qs = gr.Textbox(label="Question", value="Describe this image and its style in a very detailed manner. "
+                                                        "The image is a realistic photography, not an art painting.")
+            with gr.Accordion("Feedback", open=False):
                 fb_score = gr.Slider(label="Feedback Score", minimum=1, maximum=5, value=3, step=1,
                                      interactive=True)
                 fb_text = gr.Textbox(label="Feedback Text", value="", placeholder='Please enter your feedback here.')
@@ -296,10 +312,10 @@ with block:
                          outputs=[denoise_image])
     stage2_ips = [input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                  linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select]
+                  linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,num_images,random_seed]
     diffusion_button.click(fn=stage2_process, inputs=stage2_ips, outputs=[result_gallery, event_id, fb_score, fb_text])
     restart_button.click(fn=load_and_reset, inputs=[param_setting],
                          outputs=[edm_steps, s_cfg, s_stage2, s_stage1, s_churn, s_noise, a_prompt, n_prompt,
                                   color_fix_type, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2])
     submit_button.click(fn=submit_feedback, inputs=[event_id, fb_score, fb_text], outputs=[fb_text])
-block.launch(server_name=server_ip, server_port=server_port, share=args.share)
+block.launch(server_name=server_ip, server_port=server_port, share=args.share, inbrowser=True)
