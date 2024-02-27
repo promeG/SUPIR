@@ -88,7 +88,7 @@ def llave_process(input_image, temperature, top_p, qs=None):
     return captions[0]
 
 
-def batch_upscale(batch_process_folder, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
+def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                    linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed, progress=gr.Progress()):
     import os
@@ -122,7 +122,7 @@ def batch_upscale(batch_process_folder, prompt, a_prompt, n_prompt, num_samples,
             # Call the stage2_process method for the image
             stage2_process(img_array, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                            s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                           linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed, dont_update_progress=True)
+                           linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed, dont_update_progress=True, outputs_folder=outputs_folder)
 
             # Update progress
             
@@ -132,10 +132,11 @@ def batch_upscale(batch_process_folder, prompt, a_prompt, n_prompt, num_samples,
             continue
     return "All Done"
 
+
 def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
 
-                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,random_seed,dont_update_progress=False, progress=gr.Progress()):
+                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,random_seed,dont_update_progress=False,outputs_folder="outputs", progress=gr.Progress()):
 
     torch.cuda.set_device(SUPIR_device)
 
@@ -175,6 +176,11 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
     output_dir = os.path.join("outputs")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+
+    if outputs_folder.strip() != "" and outputs_folder != "outputs":
+        output_dir = outputs_folder
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
     
     all_results = []
     counter = 1
@@ -342,7 +348,8 @@ with block:
                     diffusion_button = gr.Button(value="Stage2 Run")
             with gr.Row():
                 with gr.Column():
-                    batch_process_folder = gr.Textbox(label="Batch Processing Folder Path - If image_file_name.txt exists it will be read and used as prompt (optional). Uses same settings of single upscale (Stage 2 Run). If no caption txt it will use the Prompt you written. It can be empty as well.", placeholder="e.g. R:\SUPIR video\comparison_images")
+                    batch_process_folder = gr.Textbox(label="Batch Processing Input Folder Path - If image_file_name.txt exists it will be read and used as prompt (optional). Uses same settings of single upscale (Stage 2 Run). If no caption txt it will use the Prompt you written. It can be empty as well.", placeholder="e.g. R:\SUPIR video\comparison_images")
+                    outputs_folder = gr.Textbox(label="Batch Processing Output Folder Path - If left empty images are saved in default folder", placeholder="e.g. R:\SUPIR video\comparison_images\outputs")
             with gr.Row():
                 with gr.Column():
                     batch_upscale_button = gr.Button(value="Start Batch Upscaling")
@@ -400,7 +407,7 @@ with block:
                          outputs=[edm_steps, s_cfg, s_stage2, s_stage1, s_churn, s_noise, a_prompt, n_prompt,
                                   color_fix_type, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2])
     submit_button.click(fn=submit_feedback, inputs=[event_id, fb_score, fb_text], outputs=[fb_text])
-    stage2_ips_batch = [batch_process_folder, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
+    stage2_ips_batch = [batch_process_folder,outputs_folder, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,num_images,random_seed]
     batch_upscale_button.click(fn=batch_upscale, inputs=stage2_ips_batch, outputs=outputlabel, show_progress=True, queue=True)
