@@ -22,3 +22,4 @@ sgm/modules/diffusionmodules/__pycache__/
 sgm/modules/distributions/__pycache__/
 sgm/modules/encoders/__pycache__/
 venv/
+outputs
