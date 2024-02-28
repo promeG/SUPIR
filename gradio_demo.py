@@ -29,6 +29,7 @@ parser.add_argument("--use_tile_vae", action='store_true', default=False)
 parser.add_argument("--encoder_tile_size", type=int, default=512)
 parser.add_argument("--decoder_tile_size", type=int, default=64)
 parser.add_argument("--load_8bit_llava", action='store_true', default=False)
+parser.add_argument("--outputs_folder")
 args = parser.parse_args()
 server_ip = args.ip
 use_llava = not args.no_llava
@@ -176,6 +177,11 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
     output_dir = os.path.join("outputs")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+
+    if args.outputs_folder:
+        output_dir = args.outputs_folder
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
 
     if outputs_folder.strip() != "" and outputs_folder != "outputs":
         output_dir = outputs_folder
