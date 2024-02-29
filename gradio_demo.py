@@ -63,6 +63,8 @@ else:
     llava_agent = None
 
 def stage1_process(input_image, gamma_correction):
+    with Image.open(input_image) as img:
+        input_image = np.asarray(img)
     torch.cuda.set_device(SUPIR_device)
     LQ = HWC3(input_image)
     LQ = fix_resize(LQ, 512)
