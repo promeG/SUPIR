@@ -176,6 +176,11 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
     model.ae_dtype = convert_dtype(ae_dtype)
     model.model.dtype = convert_dtype(diff_dtype)
 
+    if len(outputs_folder) < 1:
+        if args.outputs_folder:
+            outputs_folder=args.outputs_folder 
+        else:
+            outputs_folder="outputs"
     output_dir = os.path.join(outputs_folder)
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -337,7 +342,7 @@ with block:
 
 
         with gr.Column():
-            gr.Markdown("<center>Upscaled Images Output - V14</center>")
+            gr.Markdown("<center>Upscaled Images Output - V15</center>")
             if not args.use_image_slider:
                 result_gallery = gr.Gallery(label='Output', show_label=False, elem_id="gallery1")
             else:
