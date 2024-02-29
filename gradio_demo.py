@@ -108,8 +108,7 @@ def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_promp
             file_path = os.path.join(batch_process_folder, file_name)
             prompt = main_prompt
             # Open the image file and convert it to a NumPy array
-            with Image.open(file_path) as img:
-                img_array = np.asarray(img)
+
 
             # Construct the path for the prompt text file
             base_name = os.path.splitext(file_name)[0]
@@ -121,7 +120,7 @@ def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_promp
                     prompt = f.read().strip()
 
             # Call the stage2_process method for the image
-            stage2_process(img_array, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
+            stage2_process(file_path, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                            s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                            linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed, dont_update_progress=True, outputs_folder=outputs_folder)
 
@@ -136,9 +135,11 @@ def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_promp
 
 def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-
-                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,random_seed,dont_update_progress=False,outputs_folder="outputs", progress=gr.Progress()):
-
+                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
+                   random_seed, dont_update_progress=False, outputs_folder="outputs", progress=None):
+    input_image_name=input_image
+    with Image.open(input_image) as img:
+        input_image = np.asarray(img)
     torch.cuda.set_device(SUPIR_device)
 
     event_id = str(time.time_ns())
@@ -160,8 +161,7 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
             model.load_state_dict(ckpt_F, strict=False)
             model.current_model = 'v0-F'
     input_image = HWC3(input_image)
-    input_image = upscale_image(input_image, upscale, unit_resolution=32,
-                                min_size=1024)
+    input_image = upscale_image(input_image, upscale, unit_resolution=32, min_size=1024)
 
     LQ = np.array(input_image) / 255.0
     LQ = np.power(LQ, gamma_correction)
@@ -174,26 +174,16 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
     model.ae_dtype = convert_dtype(ae_dtype)
     model.model.dtype = convert_dtype(diff_dtype)
 
-    output_dir = os.path.join("outputs")
+    output_dir = os.path.join(outputs_folder)
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    if args.outputs_folder:
-        output_dir = args.outputs_folder
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-
-    if outputs_folder.strip() != "" and outputs_folder != "outputs":
-        output_dir = outputs_folder
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-    
     all_results = []
     counter = 1
-    if not dont_update_progress:
+    if not dont_update_progress and progress is not None:
         progress(0 / num_images, desc="Generating images")
     for _ in range(num_images):
-        if random_seed or num_images>1:
+        if random_seed or num_images > 1:
             seed = np.random.randint(0, 2147483647)
         start_time = time.time()  # Track the start time
         samples = model.batchify_sample(LQ, captions, num_steps=edm_steps, restoration_scale=s_stage1, s_churn=s_churn,
@@ -206,29 +196,34 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
             0, 255).astype(np.uint8)
         results = [x_samples[i] for i in range(num_samples)]
         image_generation_time = time.time() - start_time
-        desc=f"Generated image {counter}/{num_images} in {image_generation_time:.2f} seconds"
-        counter=counter+1
-        if not dont_update_progress:
+        desc = f"Generated image {counter}/{num_images} in {image_generation_time:.2f} seconds"
+        counter += 1
+        if not dont_update_progress and progress is not None:
             progress(counter / num_images, desc=desc)
         print(desc)  # Print the progress
         start_time = time.time()  # Reset the start time for the next image
 
         for i, result in enumerate(results):
-            timestamp = datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S_%f')[:-3]
-            save_path = os.path.join(output_dir, f'{timestamp}.png')
+            base_filename = os.path.splitext(os.path.basename(input_image_name))[0]
+            if len(base_filename) > 250:
+                base_filename = base_filename[:250]
+            save_path = os.path.join(output_dir, f'{base_filename}.png')
+            index = 1
+            while os.path.exists(save_path):
+                save_path = os.path.join(output_dir, f'{base_filename}_{str(index).zfill(4)}.png')
+                index += 1
             Image.fromarray(result).save(save_path)
         all_results.extend(results)
-
 
     if args.log_history:
         os.makedirs(f'./history/{event_id[:5]}/{event_id[5:]}', exist_ok=True)
         with open(f'./history/{event_id[:5]}/{event_id[5:]}/logs.txt', 'w') as f:
             f.write(str(event_dict))
         f.close()
-        Image.fromarray(input_image).save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
+        Image.fromarray(input_image_name).save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
         for i, result in enumerate(all_results):
             Image.fromarray(result).save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
-    return [input_image] + all_results, event_id, 3, '', seed
+    return [input_image_name] + all_results, event_id, 3, '', seed
 
 def load_and_reset(param_setting):
     edm_steps = 50
@@ -300,7 +295,7 @@ with block:
             with gr.Row(equal_height=True):
                 with gr.Column():
                     gr.Markdown("<center>Input</center>")
-                    input_image = gr.Image(type="numpy", elem_id="image-input", height=400, width=400)
+                    input_image = gr.Image(type="filepath", elem_id="image-input", height=400, width=400)
                 with gr.Column():
                     gr.Markdown("<center>Stage1 Output</center>")
                     denoise_image = gr.Image(type="numpy", elem_id="image-s1", height=400, width=400)
@@ -340,7 +335,7 @@ with block:
 
 
         with gr.Column():
-            gr.Markdown("<center>Upscaled Images Output</center>")
+            gr.Markdown("<center>Upscaled Images Output - V14</center>")
             if not args.use_image_slider:
                 result_gallery = gr.Gallery(label='Output', show_label=False, elem_id="gallery1")
             else:
