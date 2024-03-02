@@ -128,7 +128,7 @@ def read_image_metadata(image_path):
 
 def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed, progress=gr.Progress()):
+                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed,apply_stage_1, progress=gr.Progress()):
     import os
     import numpy as np
     from PIL import Image
@@ -159,7 +159,7 @@ def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_promp
             # Call the stage2_process method for the image
             stage2_process(file_path, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                            s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                           linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed, dont_update_progress=True, outputs_folder=outputs_folder, batch_process_folder=outputs_folder)
+                           linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed,apply_stage_1, dont_update_progress=True, outputs_folder=outputs_folder, batch_process_folder=outputs_folder)
 
             # Update progress
             
@@ -175,10 +175,12 @@ from PIL import Image, PngImagePlugin
 def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                    linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-                   random_seed, dont_update_progress=False, outputs_folder="outputs", batch_process_folder="", progress=None):
+                   random_seed,apply_stage_1, dont_update_progress=False, outputs_folder="outputs", batch_process_folder="", progress=None):
     input_image_name = input_image
     with Image.open(input_image) as img:
         input_image = np.asarray(img)
+    if apply_stage_1:
+        input_image = stage1_process(input_image_name, gamma_correction)
     torch.cuda.set_device(SUPIR_device)
 
     event_id = str(time.time_ns())
@@ -396,7 +398,7 @@ with block:
 
 
             with gr.Column():
-                gr.Markdown("<center>Upscaled Images Output - V16</center>")
+                gr.Markdown("<center>Upscaled Images Output - V17</center>")
                 if not args.use_image_slider:
                     result_gallery = gr.Gallery(label='Output', show_label=False, elem_id="gallery1")
                 else:
@@ -405,7 +407,7 @@ with block:
                     with gr.Column():
                         denoise_button = gr.Button(value="Stage1 Run")
                     with gr.Column():
-                        llave_button = gr.Button(value="LlaVa Run")
+                        apply_stage_1 = gr.Checkbox(label="Apply Stage 1 Before Stage 2 - Works On Batch Too", value=False)
                     with gr.Column():
                         diffusion_button = gr.Button(value="Stage2 Run")
                 with gr.Row():
@@ -444,6 +446,8 @@ with block:
                     with gr.Column():
                         model_select = gr.Radio(["v0-Q", "v0-F"], label="Model Selection", value="v0-Q",
                                                 interactive=True)
+                    with gr.Column():
+                        llave_button = gr.Button(value="LlaVa Run")
                 with gr.Accordion("LLaVA options", open=False):
                     temperature = gr.Slider(label="Temperature", minimum=0., maximum=1.0, value=0.2, step=0.1)
                     top_p = gr.Slider(label="Top P", minimum=0., maximum=1.0, value=0.7, step=0.1)
@@ -469,7 +473,7 @@ with block:
                          outputs=[denoise_image])
     stage2_ips = [input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                  linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,num_images,random_seed]
+                  linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,num_images,random_seed,apply_stage_1]
     diffusion_button.click(fn=stage2_process, inputs=stage2_ips, outputs=[result_gallery, event_id, fb_score, fb_text, seed], show_progress=True, queue=True)
     restart_button.click(fn=load_and_reset, inputs=[param_setting],
                          outputs=[edm_steps, s_cfg, s_stage2, s_stage1, s_churn, s_noise, a_prompt, n_prompt,
@@ -477,7 +481,7 @@ with block:
     submit_button.click(fn=submit_feedback, inputs=[event_id, fb_score, fb_text], outputs=[fb_text])
     stage2_ips_batch = [batch_process_folder,outputs_folder, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                  linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,num_images,random_seed]
+                  linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,num_images,random_seed,apply_stage_1]
     batch_upscale_button.click(fn=batch_upscale, inputs=stage2_ips_batch, outputs=outputlabel, show_progress=True, queue=True)
 if args.port is not None:  # Check if the --port argument is provided
     block.launch(server_name=server_ip,server_port=args.port, share=args.share, inbrowser=True)
