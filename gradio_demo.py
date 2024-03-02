@@ -15,6 +15,9 @@ import einops
 import copy
 import datetime
 import time
+from PIL.ExifTags import TAGS
+from PIL import PngImagePlugin
+from datetime import datetime
 
 
 parser = argparse.ArgumentParser()
@@ -90,6 +93,38 @@ def llave_process(input_image, temperature, top_p, qs=None):
         captions = ['LLaVA is not available. Please add text manually.']
     return captions[0]
 
+def read_image_metadata(image_path):
+    # Check if the file exists
+    if not os.path.exists(image_path):
+        return "File does not exist."
+
+    # Get the last modified date and format it
+    last_modified_timestamp = os.path.getmtime(image_path)
+    last_modified_date = datetime.fromtimestamp(last_modified_timestamp).strftime('%d %B %Y, %H:%M %p - UTC')
+
+    # Open the image and extract metadata
+    with Image.open(image_path) as img:
+        width, height = img.size
+        megapixels = (width * height) / 1e6
+
+        metadata_str = f"Last Modified Date: {last_modified_date}\nMegapixels: {megapixels:.2f}\n"
+
+        # Extract metadata based on image format
+        if img.format == 'JPEG':
+            exif_data = img._getexif()
+            if exif_data:
+                for tag, value in exif_data.items():
+                    tag_name = Image.ExifTags.TAGS.get(tag, tag)
+                    metadata_str += f"{tag_name}: {value}\n"
+        else:
+            metadata = img.info
+            if metadata:
+                for key, value in metadata.items():
+                    metadata_str += f"{key}: {value}\n"
+            else:
+                metadata_str += "No additional metadata found."
+
+    return metadata_str
 
 def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
@@ -124,7 +159,7 @@ def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_promp
             # Call the stage2_process method for the image
             stage2_process(file_path, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                            s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                           linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed, dont_update_progress=True, outputs_folder=outputs_folder)
+                           linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed, dont_update_progress=True, outputs_folder=outputs_folder, batch_process_folder=outputs_folder)
 
             # Update progress
             
@@ -135,11 +170,13 @@ def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_promp
     return "All Done"
 
 
+from PIL import Image, PngImagePlugin
+
 def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                    linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-                   random_seed, dont_update_progress=False, outputs_folder="outputs", progress=None):
-    input_image_name=input_image
+                   random_seed, dont_update_progress=False, outputs_folder="outputs", batch_process_folder="", progress=None):
+    input_image_name = input_image
     with Image.open(input_image) as img:
         input_image = np.asarray(img)
     torch.cuda.set_device(SUPIR_device)
@@ -162,6 +199,7 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
             print('load v0-F')
             model.load_state_dict(ckpt_F, strict=False)
             model.current_model = 'v0-F'
+
     input_image = HWC3(input_image)
     input_image = upscale_image(input_image, upscale, unit_resolution=32, min_size=1024)
 
@@ -175,15 +213,19 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
 
     model.ae_dtype = convert_dtype(ae_dtype)
     model.model.dtype = convert_dtype(diff_dtype)
-
     if len(outputs_folder) < 1:
-        if args.outputs_folder:
-            outputs_folder=args.outputs_folder 
-        else:
-            outputs_folder="outputs"
+            outputs_folder = "outputs"
+    if args.outputs_folder:
+        outputs_folder = args.outputs_folder
+    if len(batch_process_folder) > 1:
+        outputs_folder=batch_process_folder
     output_dir = os.path.join(outputs_folder)
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+
+    metadata_dir = os.path.join(output_dir, "images_meta_data")
+    if not os.path.exists(metadata_dir):
+        os.makedirs(metadata_dir)
 
     all_results = []
     counter = 1
@@ -219,7 +261,18 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
             while os.path.exists(save_path):
                 save_path = os.path.join(output_dir, f'{base_filename}_{str(index).zfill(4)}.png')
                 index += 1
-            Image.fromarray(result).save(save_path)
+
+            # Embed metadata into the image
+            img = Image.fromarray(result)
+            meta = PngImagePlugin.PngInfo()
+            for key, value in event_dict.items():
+                meta.add_text(key, str(value))
+            img.save(save_path, "PNG", pnginfo=meta)
+            metadata_path = os.path.join(metadata_dir, f'{os.path.splitext(os.path.basename(save_path))[0]}.txt')
+            with open(metadata_path, 'w') as f:
+                for key, value in event_dict.items():
+                    f.write(f'{key}: {value}\n')
+
         all_results.extend(results)
 
     if args.log_history:
@@ -295,114 +348,121 @@ The service is a research preview intended for non-commercial use only, subject 
 
 block = gr.Blocks(title='SUPIR').queue()
 with block:
-    with gr.Row():
-        gr.Markdown(title_md)
-    with gr.Row():
-        with gr.Column():
-            with gr.Row(equal_height=True):
-                with gr.Column():
-                    gr.Markdown("<center>Input</center>")
-                    input_image = gr.Image(type="filepath", elem_id="image-input", height=400, width=400)
-                with gr.Column():
-                    gr.Markdown("<center>Stage1 Output</center>")
-                    denoise_image = gr.Image(type="numpy", elem_id="image-s1", height=400, width=400)
-            prompt = gr.Textbox(label="Prompt", value="")
-            with gr.Accordion("Stage1 options", open=False):
-                gamma_correction = gr.Slider(label="Gamma Correction", minimum=0.1, maximum=2.0, value=1.0, step=0.1)
+    with gr.Tab("Main Upscale"):
+        with gr.Row():
+            gr.Markdown(title_md)
+        with gr.Row():
+            with gr.Column():
+                with gr.Row(equal_height=True):
+                    with gr.Column():
+                        gr.Markdown("<center>Input</center>")
+                        input_image = gr.Image(type="filepath", elem_id="image-input", height=400, width=400)
+                    with gr.Column():
+                        gr.Markdown("<center>Stage1 Output</center>")
+                        denoise_image = gr.Image(type="numpy", elem_id="image-s1", height=400, width=400)
+                prompt = gr.Textbox(label="Prompt", value="")
+                with gr.Accordion("Stage1 options", open=False):
+                    gamma_correction = gr.Slider(label="Gamma Correction", minimum=0.1, maximum=2.0, value=1.0, step=0.1)
 
-            with gr.Accordion("Stage2 options", open=True):
-               with gr.Row():
-                  with gr.Column():
-                        num_images = gr.Slider(label="Number Of Images To Generate", minimum=1, maximum=200
-                                        , value=1, step=1)
-                        num_samples = gr.Slider(label="Batch Size", minimum=1, maximum=4 if not args.use_image_slider else 1
-                                        , value=1, step=1)
-                  with gr.Column():
-                    upscale = gr.Slider(label="Upscale", minimum=1, maximum=8, value=1, step=0.1)
-                    random_seed = gr.Checkbox(label="Randomize Seed", value=True)
-               with gr.Row():
-                    edm_steps = gr.Slider(label="Steps", minimum=20, maximum=200, value=50, step=1)
-                    s_cfg = gr.Slider(label="Text Guidance Scale", minimum=1.0, maximum=15.0, value=7.5, step=0.1)
-                    s_stage2 = gr.Slider(label="Stage2 Guidance Strength", minimum=0., maximum=1., value=1., step=0.05)
-                    s_stage1 = gr.Slider(label="Stage1 Guidance Strength", minimum=-1.0, maximum=6.0, value=-1.0, step=1.0)
-                    seed = gr.Slider(label="Seed", minimum=-1, maximum=2147483647, step=1, randomize=True)
-                    s_churn = gr.Slider(label="S-Churn", minimum=0, maximum=40, value=5, step=1)
-                    s_noise = gr.Slider(label="S-Noise", minimum=1.0, maximum=1.1, value=1.003, step=0.001)
-               with gr.Row():   
-                    a_prompt = gr.Textbox(label="Default Positive Prompt",
-                                          value='Cinematic, High Contrast, highly detailed, taken using a Canon EOS R '
-                                                'camera, hyper detailed photo - realistic maximum detail, 32k, Color '
-                                                'Grading, ultra HD, extreme meticulous detailing, skin pore detailing, '
-                                                'hyper sharpness, perfect without deformations.')
-                    n_prompt = gr.Textbox(label="Default Negative Prompt",
-                                          value='painting, oil painting, illustration, drawing, art, sketch, oil painting, '
-                                                'cartoon, CG Style, 3D render, unreal engine, blurring, dirty, messy, '
-                                                'worst quality, low quality, frames, watermark, signature, jpeg artifacts, '
-                                                'deformed, lowres, over-smooth')
+                with gr.Accordion("Stage2 options", open=True):
+                   with gr.Row():
+                      with gr.Column():
+                            num_images = gr.Slider(label="Number Of Images To Generate", minimum=1, maximum=200
+                                            , value=1, step=1)
+                            num_samples = gr.Slider(label="Batch Size", minimum=1, maximum=4 if not args.use_image_slider else 1
+                                            , value=1, step=1)
+                      with gr.Column():
+                        upscale = gr.Slider(label="Upscale", minimum=1, maximum=8, value=1, step=0.1)
+                        random_seed = gr.Checkbox(label="Randomize Seed", value=True)
+                   with gr.Row():
+                        edm_steps = gr.Slider(label="Steps", minimum=20, maximum=200, value=50, step=1)
+                        s_cfg = gr.Slider(label="Text Guidance Scale", minimum=1.0, maximum=15.0, value=7.5, step=0.1)
+                        s_stage2 = gr.Slider(label="Stage2 Guidance Strength", minimum=0., maximum=1., value=1., step=0.05)
+                        s_stage1 = gr.Slider(label="Stage1 Guidance Strength", minimum=-1.0, maximum=6.0, value=-1.0, step=1.0)
+                        seed = gr.Slider(label="Seed", minimum=-1, maximum=2147483647, step=1, randomize=True)
+                        s_churn = gr.Slider(label="S-Churn", minimum=0, maximum=40, value=5, step=1)
+                        s_noise = gr.Slider(label="S-Noise", minimum=1.0, maximum=1.1, value=1.003, step=0.001)
+                   with gr.Row():   
+                        a_prompt = gr.Textbox(label="Default Positive Prompt",
+                                              value='Cinematic, High Contrast, highly detailed, taken using a Canon EOS R '
+                                                    'camera, hyper detailed photo - realistic maximum detail, 32k, Color '
+                                                    'Grading, ultra HD, extreme meticulous detailing, skin pore detailing, '
+                                                    'hyper sharpness, perfect without deformations.')
+                        n_prompt = gr.Textbox(label="Default Negative Prompt",
+                                              value='painting, oil painting, illustration, drawing, art, sketch, oil painting, '
+                                                    'cartoon, CG Style, 3D render, unreal engine, blurring, dirty, messy, '
+                                                    'worst quality, low quality, frames, watermark, signature, jpeg artifacts, '
+                                                    'deformed, lowres, over-smooth')
 
 
-        with gr.Column():
-            gr.Markdown("<center>Upscaled Images Output - V15</center>")
-            if not args.use_image_slider:
-                result_gallery = gr.Gallery(label='Output', show_label=False, elem_id="gallery1")
-            else:
-                result_gallery = ImageSlider(label='Output', show_label=False, elem_id="gallery1")
-            with gr.Row():
-                with gr.Column():
-                    denoise_button = gr.Button(value="Stage1 Run")
-                with gr.Column():
-                    llave_button = gr.Button(value="LlaVa Run")
-                with gr.Column():
-                    diffusion_button = gr.Button(value="Stage2 Run")
-            with gr.Row():
-                with gr.Column():
-                    batch_process_folder = gr.Textbox(label="Batch Processing Input Folder Path - If image_file_name.txt exists it will be read and used as prompt (optional). Uses same settings of single upscale (Stage 2 Run). If no caption txt it will use the Prompt you written. It can be empty as well.", placeholder="e.g. R:\SUPIR video\comparison_images")
-                    outputs_folder = gr.Textbox(label="Batch Processing Output Folder Path - If left empty images are saved in default folder", placeholder="e.g. R:\SUPIR video\comparison_images\outputs")
-            with gr.Row():
-                with gr.Column():
-                    batch_upscale_button = gr.Button(value="Start Batch Upscaling")
-                    outputlabel = gr.Label("Batch Processing Progress")
-            with gr.Row():
-                with gr.Column():
-                    param_setting = gr.Dropdown(["Quality", "Fidelity"], interactive=True, label="Param Setting",
-                                               value="Quality")
-                with gr.Column():
-                    restart_button = gr.Button(value="Reset Param", scale=2)
-            with gr.Row():
-                with gr.Column():
-                    linear_CFG = gr.Checkbox(label="Linear CFG", value=False)
-                    spt_linear_CFG = gr.Slider(label="CFG Start", minimum=1.0,
-                                                    maximum=9.0, value=1.0, step=0.5)
-                with gr.Column():
-                    linear_s_stage2 = gr.Checkbox(label="Linear Stage2 Guidance", value=False)
-                    spt_linear_s_stage2 = gr.Slider(label="Guidance Start", minimum=0.,
-                                                    maximum=1., value=0., step=0.05)
-            with gr.Row():
-                with gr.Column():
-                    diff_dtype = gr.Radio(['fp32', 'fp16', 'bf16'], label="Diffusion Data Type", value="fp16",
-                                            interactive=True)
-                with gr.Column():
-                    ae_dtype = gr.Radio(['fp32', 'bf16'], label="Auto-Encoder Data Type", value="bf16",
-                                        interactive=True)
-                with gr.Column():
-                    color_fix_type = gr.Radio(["None", "AdaIn", "Wavelet"], label="Color-Fix Type", value="Wavelet",
+            with gr.Column():
+                gr.Markdown("<center>Upscaled Images Output - V16</center>")
+                if not args.use_image_slider:
+                    result_gallery = gr.Gallery(label='Output', show_label=False, elem_id="gallery1")
+                else:
+                    result_gallery = ImageSlider(label='Output', show_label=False, elem_id="gallery1")
+                with gr.Row():
+                    with gr.Column():
+                        denoise_button = gr.Button(value="Stage1 Run")
+                    with gr.Column():
+                        llave_button = gr.Button(value="LlaVa Run")
+                    with gr.Column():
+                        diffusion_button = gr.Button(value="Stage2 Run")
+                with gr.Row():
+                    with gr.Column():
+                        batch_process_folder = gr.Textbox(label="Batch Processing Input Folder Path - If image_file_name.txt exists it will be read and used as prompt (optional). Uses same settings of single upscale (Stage 2 Run). If no caption txt it will use the Prompt you written. It can be empty as well.", placeholder="e.g. R:\SUPIR video\comparison_images")
+                        outputs_folder = gr.Textbox(label="Batch Processing Output Folder Path - If left empty images are saved in default folder", placeholder="e.g. R:\SUPIR video\comparison_images\outputs")
+                with gr.Row():
+                    with gr.Column():
+                        batch_upscale_button = gr.Button(value="Start Batch Upscaling")
+                        outputlabel = gr.Label("Batch Processing Progress")
+                with gr.Row():
+                    with gr.Column():
+                        param_setting = gr.Dropdown(["Quality", "Fidelity"], interactive=True, label="Param Setting",
+                                                   value="Quality")
+                    with gr.Column():
+                        restart_button = gr.Button(value="Reset Param", scale=2)
+                with gr.Row():
+                    with gr.Column():
+                        linear_CFG = gr.Checkbox(label="Linear CFG", value=False)
+                        spt_linear_CFG = gr.Slider(label="CFG Start", minimum=1.0,
+                                                        maximum=9.0, value=1.0, step=0.5)
+                    with gr.Column():
+                        linear_s_stage2 = gr.Checkbox(label="Linear Stage2 Guidance", value=False)
+                        spt_linear_s_stage2 = gr.Slider(label="Guidance Start", minimum=0.,
+                                                        maximum=1., value=0., step=0.05)
+                with gr.Row():
+                    with gr.Column():
+                        diff_dtype = gr.Radio(['fp32', 'fp16', 'bf16'], label="Diffusion Data Type", value="fp16",
                                                 interactive=True)
-                with gr.Column():
-                    model_select = gr.Radio(["v0-Q", "v0-F"], label="Model Selection", value="v0-Q",
+                    with gr.Column():
+                        ae_dtype = gr.Radio(['fp32', 'bf16'], label="Auto-Encoder Data Type", value="bf16",
                                             interactive=True)
-            with gr.Accordion("LLaVA options", open=False):
-                temperature = gr.Slider(label="Temperature", minimum=0., maximum=1.0, value=0.2, step=0.1)
-                top_p = gr.Slider(label="Top P", minimum=0., maximum=1.0, value=0.7, step=0.1)
-                qs = gr.Textbox(label="Question", value="Describe this image and its style in a very detailed manner. "
-                                                        "The image is a realistic photography, not an art painting.")
-            with gr.Accordion("Feedback", open=False):
-                fb_score = gr.Slider(label="Feedback Score", minimum=1, maximum=5, value=3, step=1,
-                                     interactive=True)
-                fb_text = gr.Textbox(label="Feedback Text", value="", placeholder='Please enter your feedback here.')
-                submit_button = gr.Button(value="Submit Feedback")
-    with gr.Row():
-        gr.Markdown(claim_md)
-        event_id = gr.Textbox(label="Event ID", value="", visible=False)
+                    with gr.Column():
+                        color_fix_type = gr.Radio(["None", "AdaIn", "Wavelet"], label="Color-Fix Type", value="Wavelet",
+                                                    interactive=True)
+                    with gr.Column():
+                        model_select = gr.Radio(["v0-Q", "v0-F"], label="Model Selection", value="v0-Q",
+                                                interactive=True)
+                with gr.Accordion("LLaVA options", open=False):
+                    temperature = gr.Slider(label="Temperature", minimum=0., maximum=1.0, value=0.2, step=0.1)
+                    top_p = gr.Slider(label="Top P", minimum=0., maximum=1.0, value=0.7, step=0.1)
+                    qs = gr.Textbox(label="Question", value="Describe this image and its style in a very detailed manner. "
+                                                            "The image is a realistic photography, not an art painting.")
+                with gr.Accordion("Feedback", open=False):
+                    fb_score = gr.Slider(label="Feedback Score", minimum=1, maximum=5, value=3, step=1,
+                                         interactive=True)
+                    fb_text = gr.Textbox(label="Feedback Text", value="", placeholder='Please enter your feedback here.')
+                    submit_button = gr.Button(value="Submit Feedback")
+        with gr.Row():
+            gr.Markdown(claim_md)
+            event_id = gr.Textbox(label="Event ID", value="", visible=False)
+
+    with gr.Tab("Image Metadata"):
+        with gr.Row():
+            metadata_image_input = gr.Image(type="filepath", label="Upload Image")
+            metadata_output = gr.Textbox(label="Image Metadata", lines=25, max_lines=50)
+        metadata_image_input.change(fn=read_image_metadata, inputs=[metadata_image_input], outputs=[metadata_output])
 
     llave_button.click(fn=llave_process, inputs=[denoise_image, temperature, top_p, qs], outputs=[prompt])
     denoise_button.click(fn=stage1_process, inputs=[input_image, gamma_correction],
