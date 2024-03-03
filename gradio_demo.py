@@ -224,10 +224,7 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
     LQ = LQ.round().clip(0, 255).astype(np.uint8)
     LQ = LQ / 255 * 2 - 1
     LQ = torch.tensor(LQ, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
-    if use_llava:
-        captions = [prompt]
-    else:
-        captions = ['']
+    captions = [prompt]
 
     model.ae_dtype = convert_dtype(ae_dtype)
     model.model.dtype = convert_dtype(diff_dtype)
