@@ -18,7 +18,7 @@ from SUPIR.utils.face_restoration_helper import FaceRestoreHelper
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1')
-parser.add_argument("--port", type=int, default='6688')
+parser.add_argument("--port", type=int, default='7860')
 parser.add_argument("--no_llava", action='store_true', default=False)
 parser.add_argument("--use_image_slider", action='store_true', default=False)
 parser.add_argument("--log_history", action='store_true', default=False)
@@ -29,7 +29,7 @@ parser.add_argument("--local_prompt", action='store_true', default=False)
 args = parser.parse_args()
 server_ip = args.ip
 server_port = args.port
-use_llava = not args.no_llava
+use_llava = False
 
 if torch.cuda.device_count() >= 2:
     SUPIR_device = 'cuda:0'
@@ -48,6 +48,9 @@ if args.loading_half_params:
     model = model.half()
 if args.use_tile_vae:
     model.init_tile_vae(encoder_tile_size=512, decoder_tile_size=64)
+
+model = model.half()
+model.init_tile_vae(encoder_tile_size=512, decoder_tile_size=64)
 model = model.to(SUPIR_device)
 model.first_stage_model.denoise_encoder_s1 = copy.deepcopy(model.first_stage_model.denoise_encoder)
 model.current_model = 'v0-Q'
@@ -158,7 +161,7 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
         captions = eval(prompt)
     else:
         captions = [''] * (1 + len(face_helper.cropped_faces))
-
+    
     bg_caption, face_captions = captions[0], captions[1:]
 
     model.ae_dtype = convert_dtype(ae_dtype)
@@ -325,7 +328,7 @@ with block:
                 s_cfg = gr.Slider(label="Text Guidance Scale", minimum=1.0, maximum=15.0, value=7.5, step=0.1)
                 s_stage2 = gr.Slider(label="Stage2 Guidance Strength", minimum=0., maximum=1., value=1., step=0.05)
                 s_stage1 = gr.Slider(label="Stage1 Guidance Strength", minimum=-1.0, maximum=6.0, value=-1.0, step=1.0)
-                seed = gr.Slider(label="Seed", minimum=-1, maximum=2147483647, step=1, randomize=True)
+                seed = gr.Slider(label="Seed", minimum=-1, maximum=2147483647, step=1, randomize=False)
                 s_churn = gr.Slider(label="S-Churn", minimum=0, maximum=40, value=5, step=1)
                 s_noise = gr.Slider(label="S-Noise", minimum=1.0, maximum=1.1, value=1.003, step=0.001)
                 a_prompt = gr.Textbox(label="Default Positive Prompt",
@@ -408,4 +411,4 @@ with block:
                          outputs=[edm_steps, s_cfg, s_stage2, s_stage1, s_churn, s_noise, a_prompt, n_prompt,
                                   color_fix_type, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2])
     submit_button.click(fn=submit_feedback, inputs=[event_id, fb_score, fb_text], outputs=[fb_text])
-block.launch(server_name=server_ip, server_port=server_port)
+block.launch(server_name=server_ip, server_port=server_port, inbrowser=True)

@@ -1,3 +1,4 @@
+from logging import PlaceHolder
 import os
 from pickle import TRUE
 
@@ -18,6 +19,7 @@ import time
 from PIL.ExifTags import TAGS
 from PIL import PngImagePlugin
 from datetime import datetime
+from SUPIR.utils.face_restoration_helper import FaceRestoreHelper
 
 
 parser = argparse.ArgumentParser()
@@ -46,10 +48,20 @@ elif torch.cuda.device_count() == 1:
 else:
     raise ValueError('Currently support CUDA only.')
 
+face_helper = FaceRestoreHelper(
+        device=SUPIR_device,
+        upscale_factor=1,
+        face_size=1024,
+        use_parse=True,
+        det_model='retinaface_resnet50'
+    )
+
 # load SUPIR
 model = create_SUPIR_model('options/SUPIR_v0.yaml', SUPIR_sign='Q')
+
 #args.loading_half_params=True
 #args.use_tile_vae=True
+
 if args.loading_half_params:
     model = model.half()
 if args.use_tile_vae:
@@ -136,7 +148,7 @@ def stop_batch_upscale(progress=gr.Progress()):
 
 def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed,apply_stage_1, progress=gr.Progress()):
+                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed,apply_stage_1,face_resolution, apply_bg, apply_face,face_prompt, progress=gr.Progress()):
     import os
     import numpy as np
     from PIL import Image
@@ -171,7 +183,7 @@ def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_promp
             # Call the stage2_process method for the image
             stage2_process(file_path, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                            s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                           linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed,apply_stage_1, dont_update_progress=True, outputs_folder=outputs_folder, batch_process_folder=outputs_folder)
+                           linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed,apply_stage_1,face_resolution, apply_bg, apply_face,face_prompt, dont_update_progress=True, outputs_folder=outputs_folder, batch_process_folder=outputs_folder)
 
             # Update progress
             
@@ -188,7 +200,7 @@ from PIL import Image, PngImagePlugin
 def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                    linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-                   random_seed,apply_stage_1, dont_update_progress=False, outputs_folder="outputs", batch_process_folder="", progress=None):
+                   random_seed,apply_stage_1, face_resolution, apply_bg, apply_face,face_prompt, dont_update_progress=False, outputs_folder="outputs", batch_process_folder="", progress=None):
     input_image_name = input_image
     with Image.open(input_image) as img:
         input_image = np.asarray(img)
@@ -203,7 +215,7 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
                   's_noise': s_noise, 'color_fix_type': color_fix_type, 'diff_dtype': diff_dtype, 'ae_dtype': ae_dtype,
                   'gamma_correction': gamma_correction, 'linear_CFG': linear_CFG, 'linear_s_stage2': linear_s_stage2,
                   'spt_linear_CFG': spt_linear_CFG, 'spt_linear_s_stage2': spt_linear_s_stage2,
-                  'model_select': model_select}
+                  'model_select': model_select, 'apply_stage_1': apply_stage_1, 'face_resolution':face_resolution,'apply_bg':apply_bg,'face_prompt':face_prompt  }
 
     if model_select != model.current_model:
         if model_select == 'v0-Q':
@@ -214,17 +226,24 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
             print('load v0-F')
             model.load_state_dict(ckpt_F, strict=False)
             model.current_model = 'v0-F'
-
     input_image = HWC3(input_image)
-    input_image = upscale_image(input_image, upscale, unit_resolution=32, min_size=1024)
+    input_image = upscale_image(input_image, upscale, unit_resolution=32,
+                                min_size=1024)
 
-    LQ = np.array(input_image) / 255.0
-    LQ = np.power(LQ, gamma_correction)
-    LQ *= 255.0
-    LQ = LQ.round().clip(0, 255).astype(np.uint8)
+    LQ = np.array(input_image)
+    face_helper.clean_all()
+    face_helper.read_image(LQ)
+    # get face landmarks for each face
+    face_helper.get_face_landmarks_5(only_center_face=False, resize=640, eye_dist_threshold=5)
+    face_helper.align_warp_face()
+
     LQ = LQ / 255 * 2 - 1
     LQ = torch.tensor(LQ, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
-    captions = [prompt]
+
+    bg_caption = prompt
+    face_captions = prompt
+    if len(face_prompt) > 1:
+        face_captions = face_prompt
 
     model.ae_dtype = convert_dtype(ae_dtype)
     model.model.dtype = convert_dtype(diff_dtype)
@@ -244,21 +263,84 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
 
     all_results = []
     counter = 1
+    _faces = []
     if not dont_update_progress and progress is not None:
         progress(0 / num_images, desc="Generating images")
     for _ in range(num_images):
         if random_seed or num_images > 1:
             seed = np.random.randint(0, 2147483647)
         start_time = time.time()  # Track the start time
-        samples = model.batchify_sample(LQ, captions, num_steps=edm_steps, restoration_scale=s_stage1, s_churn=s_churn,
-                                        s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
-                                        num_samples=num_samples, p_p=a_prompt, n_p=n_prompt, color_fix_type=color_fix_type,
-                                        use_linear_CFG=linear_CFG, use_linear_control_scale=linear_s_stage2,
-                                        cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
+        if apply_face:
+            faces = []
+            for face in face_helper.cropped_faces:
+                _faces.append(face)
+                face = np.array(face) / 255 * 2 - 1
+                face = torch.tensor(face, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
+                faces.append(face)
 
-        x_samples = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
-            0, 255).astype(np.uint8)
-        results = [x_samples[i] for i in range(num_samples)]
+            for face, caption in zip(faces, face_captions):
+                caption = [caption]
+
+                from torch.nn.functional import interpolate
+                face = interpolate(face, size=face_resolution, mode='bilinear', align_corners=False)
+                if face_resolution < 1024:
+                    face = torch.nn.functional.pad(face, (512-face_resolution//2, 512-face_resolution//2,
+                                                          512-face_resolution//2, 512-face_resolution//2), 'constant', 0)
+
+                samples = model.batchify_sample(face, caption, num_steps=edm_steps, restoration_scale=s_stage1, s_churn=s_churn,
+                                                s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
+                                                num_samples=num_samples, p_p=a_prompt, n_p=n_prompt, color_fix_type=color_fix_type,
+                                                use_linear_CFG=linear_CFG, use_linear_control_scale=linear_s_stage2,
+                                                cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
+                if face_resolution < 1024:
+                    samples = samples[:, :, 512-face_resolution//2:512+face_resolution//2,
+                              512-face_resolution//2:512+face_resolution//2]
+                samples = interpolate(samples, size=face_helper.face_size, mode='bilinear', align_corners=False)
+                x_samples = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
+                    0, 255).astype(np.uint8)
+
+                face_helper.add_restored_face(x_samples[0])
+                _faces.append(x_samples[0])
+                #img_before_face_apply = Image.fromarray(x_samples[0])
+                #img_before_face_apply.save("applied_face_1.png", "PNG")
+
+            if apply_bg:
+                caption = [bg_caption]
+                samples = model.batchify_sample(LQ, caption, num_steps=edm_steps, restoration_scale=s_stage1,
+                                                s_churn=s_churn,
+                                                s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
+                                                num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
+                                                color_fix_type=color_fix_type,
+                                                use_linear_CFG=linear_CFG, use_linear_control_scale=linear_s_stage2,
+                                                cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
+            else:
+                samples = LQ
+            _bg = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
+                0, 255).astype(np.uint8)
+            #img_before_face_apply = Image.fromarray(_bg[0])
+            #img_before_face_apply.save("before_face_apply.png", "PNG")
+            face_helper.get_inverse_affine(None)
+            results = [face_helper.paste_faces_to_input_image(upsample_img=_bg[0])]
+            #img_before_face_apply = Image.fromarray(results[0])
+            #img_before_face_apply.save("after_face_apply.png", "PNG")
+            #img_before_face_apply = Image.fromarray(_faces[0])
+            #img_before_face_apply.save("applied_face.png", "PNG")
+
+            
+        else:
+            caption = [bg_caption]
+            samples = model.batchify_sample(LQ, caption, num_steps=edm_steps, restoration_scale=s_stage1,
+                                            s_churn=s_churn,
+                                            s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
+                                            num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
+                                            color_fix_type=color_fix_type,
+                                            use_linear_CFG=linear_CFG, use_linear_control_scale=linear_s_stage2,
+                                            cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
+            x_samples = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
+                0, 255).astype(np.uint8)
+            results = [x_samples[i] for i in range(num_samples)]
+
+        
         image_generation_time = time.time() - start_time
         desc = f"Generated image {counter}/{num_images} in {image_generation_time:.2f} seconds"
         counter += 1
@@ -298,7 +380,7 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
         Image.fromarray(input_image_name).save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
         for i, result in enumerate(all_results):
             Image.fromarray(result).save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
-    return [input_image_name] + all_results, event_id, 3, '', seed
+    return [input_image_name] + all_results, event_id, 3, '', seed, _faces
 
 
 def load_and_reset(param_setting):
@@ -378,6 +460,14 @@ with block:
                         gr.Markdown("<center>Stage1 Output</center>")
                         denoise_image = gr.Image(type="numpy", elem_id="image-s1", height=400, width=400)
                 prompt = gr.Textbox(label="Prompt", value="")
+                face_prompt = gr.Textbox(label="Face Prompt", placeholder="Optional, uses main prompt if not provided" , value="")
+                with gr.Accordion("Face Options", open=True):
+                    face_resolution = gr.Slider(label="Text Guidance Scale", minimum=256, maximum=2048, value=1024, step=32)
+                    with gr.Row():
+                        with gr.Column():
+                            apply_bg = gr.Checkbox(label="BG restoration", value=False)
+                        with gr.Column():
+                            apply_face = gr.Checkbox(label="Face restoration", value=False)
                 with gr.Accordion("Stage1 options", open=False):
                     gamma_correction = gr.Slider(label="Gamma Correction", minimum=0.1, maximum=2.0, value=1.0, step=0.1)
 
@@ -412,12 +502,13 @@ with block:
                                                     'deformed, lowres, over-smooth')
 
 
+
             with gr.Column():
-                gr.Markdown("<center>Upscaled Images Output - V18</center>")
+                gr.Markdown("<center>Upscaled Images Output - V19</center>")
                 if not args.use_image_slider:
                     result_gallery = gr.Gallery(label='Output', show_label=False, elem_id="gallery1")
                 else:
-                    result_gallery = ImageSlider(label='Output', show_label=False, elem_id="gallery1")
+                    result_gallery = ImageSlider(label='Output', interactive=True, show_label=False, elem_id="gallery1")
                 with gr.Row():
                     with gr.Column():
                         denoise_button = gr.Button(value="Stage1 Run")
@@ -483,21 +574,24 @@ with block:
             metadata_image_input = gr.Image(type="filepath", label="Upload Image")
             metadata_output = gr.Textbox(label="Image Metadata", lines=25, max_lines=50)
         metadata_image_input.change(fn=read_image_metadata, inputs=[metadata_image_input], outputs=[metadata_output])
+    with gr.Tab("Restored Faces"):
+        with gr.Row():  
+            face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
 
     llave_button.click(fn=llave_process, inputs=[denoise_image, temperature, top_p, qs], outputs=[prompt])
     denoise_button.click(fn=stage1_process, inputs=[input_image, gamma_correction],
                          outputs=[denoise_image])
     stage2_ips = [input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                  linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,num_images,random_seed,apply_stage_1]
-    diffusion_button.click(fn=stage2_process, inputs=stage2_ips, outputs=[result_gallery, event_id, fb_score, fb_text, seed], show_progress=True, queue=True)
+                  linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,num_images,random_seed,apply_stage_1,face_resolution, apply_bg, apply_face, face_prompt]
+    diffusion_button.click(fn=stage2_process, inputs=stage2_ips, outputs=[result_gallery, event_id, fb_score, fb_text, seed, face_gallery], show_progress=True, queue=True)
     restart_button.click(fn=load_and_reset, inputs=[param_setting],
                          outputs=[edm_steps, s_cfg, s_stage2, s_stage1, s_churn, s_noise, a_prompt, n_prompt,
                                   color_fix_type, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2])
     submit_button.click(fn=submit_feedback, inputs=[event_id, fb_score, fb_text], outputs=[fb_text])
     stage2_ips_batch = [batch_process_folder,outputs_folder, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                  linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,num_images,random_seed,apply_stage_1]
+                  linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,num_images,random_seed,apply_stage_1,face_resolution, apply_bg, apply_face, face_prompt]
 
     batch_upscale_button.click(fn=batch_upscale, inputs=stage2_ips_batch, outputs=outputlabel, show_progress=True, queue=True)
     batch_upscale_stop_button.click(fn=stop_batch_upscale, show_progress=True, queue=True)
