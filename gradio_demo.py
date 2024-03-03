@@ -126,12 +126,22 @@ def read_image_metadata(image_path):
 
     return metadata_str
 
+batch_processing_val = False
+
+def stop_batch_upscale(progress=gr.Progress()):
+    global batch_processing_val
+    progress(1, f"Stop command giving please wait to stop")
+    print('\n***Stop command giving please wait to stop***\n')
+    batch_processing_val = False
+
 def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                    linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed,apply_stage_1, progress=gr.Progress()):
     import os
     import numpy as np
     from PIL import Image
+    global batch_processing_val
+    batch_processing_val = True
 
     # Get the list of image files in the folder
     image_files = [file for file in os.listdir(batch_process_folder) if file.lower().endswith((".png", ".jpg", ".jpeg"))]
@@ -140,6 +150,8 @@ def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_promp
     # Iterate over all image files in the folder
     for index, file_name in enumerate(image_files):
         try:
+            if not batch_processing_val:  # Check if batch processing has been stopped
+                break
             progress((index + 1) / total_images, f"Processing {index + 1}/{total_images} image")
             # Construct the full file path
             file_path = os.path.join(batch_process_folder, file_name)
@@ -167,6 +179,7 @@ def batch_upscale(batch_process_folder,outputs_folder, prompt, a_prompt, n_promp
         except Exception as e:
             print(f"Error processing {file_name}: {e}")
             continue
+    batch_processing_val = False
     return "All Done"
 
 
@@ -398,7 +411,7 @@ with block:
 
 
             with gr.Column():
-                gr.Markdown("<center>Upscaled Images Output - V17</center>")
+                gr.Markdown("<center>Upscaled Images Output - V18</center>")
                 if not args.use_image_slider:
                     result_gallery = gr.Gallery(label='Output', show_label=False, elem_id="gallery1")
                 else:
@@ -417,6 +430,7 @@ with block:
                 with gr.Row():
                     with gr.Column():
                         batch_upscale_button = gr.Button(value="Start Batch Upscaling")
+                        batch_upscale_stop_button = gr.Button(value="Stop Batch Upscaling - Awaits Current Processing To Be Finished")
                         outputlabel = gr.Label("Batch Processing Progress")
                 with gr.Row():
                     with gr.Column():
@@ -482,7 +496,10 @@ with block:
     stage2_ips_batch = [batch_process_folder,outputs_folder, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,num_images,random_seed,apply_stage_1]
+
     batch_upscale_button.click(fn=batch_upscale, inputs=stage2_ips_batch, outputs=outputlabel, show_progress=True, queue=True)
+    batch_upscale_stop_button.click(fn=stop_batch_upscale, show_progress=True, queue=True)
+
 if args.port is not None:  # Check if the --port argument is provided
     block.launch(server_name=server_ip,server_port=args.port, share=args.share, inbrowser=True)
 else:
