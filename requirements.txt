@@ -8,7 +8,7 @@ sentencepiece==0.1.98
 tokenizers==0.13.3
 uvicorn==0.21.1
 wandb==0.14.0
-httpx==0.24.0
+httpx
 transformers==4.28.1
 accelerate==0.18.0
 scikit-learn==1.2.2

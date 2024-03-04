@@ -627,7 +627,7 @@ with block:
                 if not args.use_image_slider:
                     result_gallery = gr.Gallery(label='Output', show_label=False, elem_id="gallery1")
                 else:
-                    result_gallery = ImageSlider(label='Output', interactive=True, show_label=False, elem_id="gallery1")
+                    result_gallery = ImageSlider(label='Output', interactive=True, show_download_button=True , show_label=False, elem_id="gallery1")
                 with gr.Row():
                     with gr.Column():
                         denoise_button = gr.Button(value="Stage1 Run")
