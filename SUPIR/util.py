@@ -31,8 +31,10 @@ def create_model(config_path):
     return model
 
 
-def create_SUPIR_model(config_path, supir_sign=None, device='cpu'):
+def create_SUPIR_model(config_path, supir_sign=None, device='cpu', ckpt=None):
     config = OmegaConf.load(config_path)
+    if ckpt:
+        config.SDXL_CKPT = ckpt
     model = instantiate_from_config(config.model)
     # Move model to the specified device
     model = model.to(device)
@@ -45,13 +47,30 @@ def create_SUPIR_model(config_path, supir_sign=None, device='cpu'):
     if supir_sign is not None:
         assert supir_sign in ['F', 'Q']
         if supir_sign == 'F':
+            if not os.path.exists(config.SUPIR_CKPT_F):
+                full_path = os.path.abspath(os.path.join("..", "models", "SUPIR-v0F.ckpt"))
+                if os.path.exists(full_path):
+                    config.SUPIR_CKPT_F = full_path
             model.load_state_dict(load_state_dict(config.SUPIR_CKPT_F), strict=False)
         elif supir_sign == 'Q':
+            if not os.path.exists(config.SUPIR_CKPT_Q):
+                full_path = os.path.abspath(os.path.join("..", "models", "SUPIR-v0Q.ckpt"))
+                if os.path.exists(full_path):
+                    config.SUPIR_CKPT_Q = full_path
             model.load_state_dict(load_state_dict(config.SUPIR_CKPT_Q), strict=False)
     return model
 
+
 def load_QF_ckpt(config_path, device='cpu'):
     config = OmegaConf.load(config_path)
+    if not os.path.exists(config.SUPIR_CKPT_F):
+        full_path = os.path.abspath(os.path.join("..", "models", "SUPIR-v0F.ckpt"))
+        if os.path.exists(full_path):
+            config.SUPIR_CKPT_F = full_path
+    if not os.path.exists(config.SUPIR_CKPT_Q):
+        full_path = os.path.abspath(os.path.join("..", "models", "SUPIR-v0Q.ckpt"))
+        if os.path.exists(full_path):
+            config.SUPIR_CKPT_Q = full_path
     # Load checkpoints to the specified device
     ckpt_F = torch.load(config.SUPIR_CKPT_F, map_location=device)
     ckpt_Q = torch.load(config.SUPIR_CKPT_Q, map_location=device)
@@ -141,7 +160,6 @@ def fix_resize(input_image, size=512, unit_resolution=64):
     img = cv2.resize(input_image, (W, H), interpolation=cv2.INTER_LANCZOS4 if upscale > 1 else cv2.INTER_AREA)
     img = img.round().clip(0, 255).astype(np.uint8)
     return img
-
 
 
 def Numpy2Tensor(img):

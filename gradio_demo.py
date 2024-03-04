@@ -35,6 +35,7 @@ parser.add_argument("--use_tile_vae", action='store_true', default=False)
 parser.add_argument("--encoder_tile_size", type=int, default=512)
 parser.add_argument("--decoder_tile_size", type=int, default=64)
 parser.add_argument("--load_8bit_llava", action='store_true', default=False)
+parser.add_argument("--ckpt", type=str, default='models/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors')
 parser.add_argument("--theme", type=str, default='d8ahazard/material_design_rd')
 parser.add_argument("--outputs_folder")
 args = parser.parse_args()
@@ -56,6 +57,7 @@ llava_agent = None
 ckpt_Q = None
 ckpt_F = None
 models_loaded = False
+
 
 def load_models():
     global face_helper, model, llava_agent, ckpt_Q, ckpt_F, models_loaded
@@ -82,12 +84,11 @@ def load_face_helper():
         )
 
 
-
 def load_model():
     global model
     if model is None:
         # load SUPIR
-        model = create_SUPIR_model('options/SUPIR_v0.yaml', supir_sign='Q', device='cpu')
+        model = create_SUPIR_model('options/SUPIR_v0.yaml', supir_sign='Q', device='cpu', ckpt=args.ckpt)
         if args.loading_half_params:
             model = model.half()
         if args.use_tile_vae:
@@ -95,16 +96,19 @@ def load_model():
         model.first_stage_model.denoise_encoder_s1 = copy.deepcopy(model.first_stage_model.denoise_encoder)
         model.current_model = 'v0-Q'
 
+
 def load_llava():
     global llava_agent
     if llava_agent is None and use_llava:
         llava_agent = LLavaAgent(LLAVA_MODEL_PATH, device='cpu', load_8bit=args.load_8bit_llava,
-                                     load_4bit=False)
+                                 load_4bit=False)
+
 
 def load_qf():
     global ckpt_Q, ckpt_F
     if ckpt_Q is None or ckpt_F is None:
         ckpt_Q, ckpt_F = load_QF_ckpt('options/SUPIR_v0.yaml')
+
 
 def all_to_cpu():
     global face_helper, model, llava_agent
@@ -114,7 +118,7 @@ def all_to_cpu():
         model = model.to('cpu')
     if llava_agent is not None:
         llava_agent = llava_agent.to('cpu')
-    torch.cuda.set_device('cpu')
+
 
 # This could probably be renamed and used to move devices to cpu as well...buuut...
 def to_gpu(elem_to_load, device):
@@ -230,7 +234,7 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
             with Image.open(input_image) as img:
                 image_array = np.asarray(img)
             if apply_stage_1:
-                image_array = stage1_process(input_image_name, gamma_correction)
+                image_array = stage1_process(file_path, gamma_correction)
             stage_2_files.append((file_path, image_array))
         except Exception as e:
             print(f"Error processing {file_name}: {e}")
@@ -255,12 +259,17 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
                     prompt = f.read().strip()
 
             # Call the stage2_process method for the image
-            stage2_process(file_path, image_array, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
-                           s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                           linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-                           random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,
-                           dont_update_progress=True, outputs_folder=outputs_folder,
-                           batch_process_folder=outputs_folder)
+            # image_path, image_array, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1,
+            # s_stage2,
+            # s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
+            # linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
+            # random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,
+            # dont_update_progress = False, outputs_folder = "outputs", batch_process_folder = "", progress = None
+            stage2_process(file_path, image_array, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps,
+                           s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
+                           gamma_correction, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2,
+                           model_select, num_images, random_seed, apply_stage_1, face_resolution, apply_bg, apply_face,
+                           face_prompt, dont_update_progress=True, outputs_folder=outputs_folder, batch_process_folder=outputs_folder)
 
             # Update progress
 
@@ -272,16 +281,22 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
     return "All Done"
 
 
-def stage2_process(image_path, image_array, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
+def stage2_process(image_path, image_array, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1,
+                   s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                    linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
                    random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,
                    dont_update_progress=False, outputs_folder="outputs", batch_process_folder="", progress=None):
+    global model
+    if image_array is None:
+        with Image.open(image_path) as img:
+            image_array = np.asarray(img)
     input_image = image_array
     load_model()
     load_qf()
     to_gpu(model, SUPIR_device)
-
+    if model is None:
+        raise ValueError('Model not loaded')
     event_id = str(time.time_ns())
     event_dict = {'event_id': event_id, 'localtime': time.ctime(), 'prompt': prompt, 'a_prompt': a_prompt,
                   'n_prompt': n_prompt, 'num_samples': num_samples, 'upscale': upscale, 'edm_steps': edm_steps,
@@ -307,6 +322,8 @@ def stage2_process(image_path, image_array, prompt, a_prompt, n_prompt, num_samp
 
     lq = np.array(input_image)
     load_face_helper()
+    if face_helper is None or not isinstance(face_helper, FaceRestoreHelper):
+        raise ValueError('Face helper not loaded')
     face_helper.clean_all()
     face_helper.read_image(lq)
     # get face landmarks for each face
@@ -378,7 +395,7 @@ def stage2_process(image_path, image_array, prompt, a_prompt, n_prompt, num_samp
                               512 - face_resolution // 2:512 + face_resolution // 2]
                 samples = interpolate(samples, size=face_helper.face_size, mode='bilinear', align_corners=False)
                 x_samples = (
-                            einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
+                        einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
                     0, 255).astype(np.uint8)
 
                 face_helper.add_restored_face(x_samples[0])
@@ -458,12 +475,12 @@ def stage2_process(image_path, image_array, prompt, a_prompt, n_prompt, num_samp
         with open(f'./history/{event_id[:5]}/{event_id[5:]}/logs.txt', 'w') as f:
             f.write(str(event_dict))
         f.close()
-        Image.fromarray(input_image_name).save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
+        Image.fromarray(input_image).save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
         for i, result in enumerate(all_results):
             Image.fromarray(result).save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
     if not batch_processing_val:
         all_to_cpu()
-    return [input_image_name] + all_results, event_id, 3, '', seed, _faces
+    return [input_image] + all_results, event_id, 3, '', seed, _faces
 
 
 def load_and_reset(param_setting):
@@ -526,7 +543,7 @@ By using this service, users are required to agree to the following terms: The s
 The service is a research preview intended for non-commercial use only, subject to the model [License](https://github.com/Fanghua-Yu/SUPIR) of SUPIR.
 """
 
-block = gr.Blocks(title='SUPIR',theme=args.theme).queue()
+block = gr.Blocks(title='SUPIR', theme=args.theme).queue()
 with block:
     with gr.Tab("Main Upscale"):
         with gr.Row():
@@ -674,7 +691,7 @@ with block:
     llave_button.click(fn=llava_process, inputs=[denoise_image, temperature, top_p, qs], outputs=[prompt])
     denoise_button.click(fn=stage1_process, inputs=[input_image, gamma_correction],
                          outputs=[denoise_image])
-    stage2_ips = [input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
+    stage2_ips = [input_image, None, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
                   random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt]
