@@ -52,7 +52,7 @@ print(args)
 use_llava = not args.no_llava
 
 # load SUPIR
-model = create_SUPIR_model('options/SUPIR_v0.yaml', SUPIR_sign=args.SUPIR_sign).to(SUPIR_device)
+model = create_SUPIR_model('options/SUPIR_v0.yaml', supir_sign=args.SUPIR_sign).to(SUPIR_device)
 model.ae_dtype = convert_dtype(args.ae_dtype)
 model.model.dtype = convert_dtype(args.diff_dtype)
 # load LLaVA
@@ -84,7 +84,7 @@ for img_pth in os.listdir(args.img_dir):
     samples = model.batchify_sample(LQ_img, captions, num_steps=args.edm_steps, restoration_scale=args.s_stage1, s_churn=args.s_churn,
                                     s_noise=args.s_noise, cfg_scale=args.s_cfg, control_scale=args.s_stage2, seed=args.seed,
                                     num_samples=args.num_samples, p_p=args.a_prompt, n_p=args.n_prompt, color_fix_type=args.color_fix_type,
-                                    use_linear_CFG=args.linear_CFG, use_linear_control_scale=args.linear_s_stage2,
+                                    use_linear_cfg=args.linear_CFG, use_linear_control_scale=args.linear_s_stage2,
                                     cfg_scale_start=args.spt_linear_CFG, control_scale_start=args.spt_linear_s_stage2)
     # save
     for _i, sample in enumerate(samples):

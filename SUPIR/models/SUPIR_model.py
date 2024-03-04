@@ -1,16 +1,18 @@
-import torch
-from sgm.models.diffusion import DiffusionEngine
-from sgm.util import instantiate_from_config
 import copy
-from sgm.modules.distributions.distributions import DiagonalGaussianDistribution
 import random
-from SUPIR.utils.colorfix import wavelet_reconstruction, adaptive_instance_normalization
+
+import torch
 from pytorch_lightning import seed_everything
-from torch.nn.functional import interpolate
+
+from SUPIR.utils.colorfix import wavelet_reconstruction, adaptive_instance_normalization
 from SUPIR.utils.tilevae import VAEHook
+from sgm.models.diffusion import DiffusionEngine
+from sgm.modules.distributions.distributions import DiagonalGaussianDistribution
+from sgm.util import instantiate_from_config
+
 
 class SUPIRModel(DiffusionEngine):
-    def __init__(self, control_stage_config, ae_dtype='fp32', diffusion_dtype='fp32', p_p='', n_p='', *args, **kwargs):
+    def __init__(self, control_stage_config, ae_dtype='bf16', diffusion_dtype='bf16', p_p='', n_p='', *args, **kwargs):
         super().__init__(*args, **kwargs)
         control_model = instantiate_from_config(control_stage_config)
         self.model.load_control_model(control_model)
@@ -70,28 +72,30 @@ class SUPIRModel(DiffusionEngine):
 
     @torch.no_grad()
     def batchify_denoise(self, x, is_stage1=False):
-        '''
+        """
         [N, C, H, W], [-1, 1], RGB
-        '''
+        """
         x = self.encode_first_stage_with_denoise(x, use_sample=False, is_stage1=is_stage1)
         return self.decode_first_stage(x)
 
     @torch.no_grad()
-    def batchify_sample(self, x, p, p_p='default', n_p='default', num_steps=100, restoration_scale=4.0, s_churn=0, s_noise=1.003, cfg_scale=4.0, seed=-1,
-                        num_samples=1, control_scale=1, color_fix_type='None', use_linear_CFG=False, use_linear_control_scale=False,
+    def batchify_sample(self, x, p, p_p='default', n_p='default', num_steps=100, restoration_scale=4.0, s_churn=0,
+                        s_noise=1.003, cfg_scale=4.0, seed=-1,
+                        num_samples=1, control_scale=1, color_fix_type='None', use_linear_cfg=False,
+                        use_linear_control_scale=False,
                         cfg_scale_start=1.0, control_scale_start=0.0, **kwargs):
-        '''
+        """
         [N, C], [-1, 1], RGB
-        '''
+        """
         assert len(x) == len(p)
         assert color_fix_type in ['Wavelet', 'AdaIn', 'None']
 
-        N = len(x)
+        n = len(x)
         if num_samples > 1:
-            assert N == 1
-            N = num_samples
-            x = x.repeat(N, 1, 1, 1)
-            p = p * N
+            assert n == 1
+            n = num_samples
+            x = x.repeat(n, 1, 1, 1)
+            p = p * n
 
         if p_p == 'default':
             p_p = self.p_p
@@ -99,7 +103,7 @@ class SUPIRModel(DiffusionEngine):
             n_p = self.n_p
 
         self.sampler_config.params.num_steps = num_steps
-        if use_linear_CFG:
+        if use_linear_cfg:
             self.sampler_config.params.guider_config.params.scale_min = cfg_scale
             self.sampler_config.params.guider_config.params.scale = cfg_scale_start
         else:
@@ -118,7 +122,7 @@ class SUPIRModel(DiffusionEngine):
         x_stage1 = self.decode_first_stage(_z)
         z_stage1 = self.encode_first_stage(x_stage1)
 
-        c, uc = self.prepare_condition(_z, p, p_p, n_p, N)
+        c, uc = self.prepare_condition(_z, p, p_p, n_p, n)
 
         denoiser = lambda input, sigma, c, control_scale: self.denoiser(
             self.model, input, sigma, c, control_scale, **kwargs
@@ -127,13 +131,14 @@ class SUPIRModel(DiffusionEngine):
         noised_z = torch.randn_like(_z).to(_z.device)
 
         _samples = self.sampler(denoiser, noised_z, cond=c, uc=uc, x_center=z_stage1, control_scale=control_scale,
-                                use_linear_control_scale=use_linear_control_scale, control_scale_start=control_scale_start)
-        samples = self.decode_first_stage(_samples)
+                                use_linear_control_scale=use_linear_control_scale,
+                                control_scale_start=control_scale_start)
+        output = self.decode_first_stage(_samples)
         if color_fix_type == 'Wavelet':
-            samples = wavelet_reconstruction(samples, x_stage1)
+            output = wavelet_reconstruction(output, x_stage1)
         elif color_fix_type == 'AdaIn':
-            samples = adaptive_instance_normalization(samples, x_stage1)
-        return samples
+            output = adaptive_instance_normalization(output, x_stage1)
+        return output
 
     def init_tile_vae(self, encoder_tile_size=512, decoder_tile_size=64):
         self.first_stage_model.denoise_encoder.original_forward = self.first_stage_model.denoise_encoder.forward
@@ -149,13 +154,11 @@ class SUPIRModel(DiffusionEngine):
             self.first_stage_model.decoder, decoder_tile_size, is_decoder=True, fast_decoder=False,
             fast_encoder=False, color_fix=False, to_gpu=True)
 
-    def prepare_condition(self, _z, p, p_p, n_p, N):
-        batch = {}
-        batch['original_size_as_tuple'] = torch.tensor([1024, 1024]).repeat(N, 1).to(_z.device)
-        batch['crop_coords_top_left'] = torch.tensor([0, 0]).repeat(N, 1).to(_z.device)
-        batch['target_size_as_tuple'] = torch.tensor([1024, 1024]).repeat(N, 1).to(_z.device)
-        batch['aesthetic_score'] = torch.tensor([9.0]).repeat(N, 1).to(_z.device)
-        batch['control'] = _z
+    def prepare_condition(self, _z, p, p_p, n_p, n):
+        batch = {'original_size_as_tuple': torch.tensor([1024, 1024]).repeat(n, 1).to(_z.device),
+                 'crop_coords_top_left': torch.tensor([0, 0]).repeat(n, 1).to(_z.device),
+                 'target_size_as_tuple': torch.tensor([1024, 1024]).repeat(n, 1).to(_z.device),
+                 'aesthetic_score': torch.tensor([9.0]).repeat(n, 1).to(_z.device), 'control': _z}
 
         batch_uc = copy.deepcopy(batch)
         batch_uc['txt'] = [n_p for _ in p]
@@ -190,6 +193,8 @@ if __name__ == '__main__':
     model.load_state_dict(load_state_dict(SUPIR_CKPT), strict=False)
     model = model.cuda()
 
-    x = torch.randn(1, 3, 512, 512).cuda()
-    p = ['a professional, detailed, high-quality photo']
-    samples = model.batchify_sample(x, p, num_steps=50, restoration_scale=4.0, s_churn=0, cfg_scale=4.0, seed=-1, num_samples=1)
+    rand_x = torch.randn(1, 3, 512, 512).cuda()
+    prompt = ['a professional, detailed, high-quality photo']
+    samples = model.batchify_sample(rand_x, prompt, num_steps=50, restoration_scale=4.0, s_churn=0, cfg_scale=4.0,
+                                    seed=-1,
+                                    num_samples=1)

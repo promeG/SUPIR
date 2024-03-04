@@ -45,7 +45,7 @@ else:
 # load SUPIR
 config_path = 'options/SUPIR_v0_tiled.yaml'
 config = OmegaConf.load(config_path)
-model = create_SUPIR_model(config_path, SUPIR_sign='Q')
+model = create_SUPIR_model(config_path, supir_sign='Q')
 if args.loading_half_params:
     model = model.half()
 if args.use_tile_vae:
@@ -154,7 +154,7 @@ def stage2_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale
     samples = model.batchify_sample(LQ, captions, num_steps=edm_steps, restoration_scale=s_stage1, s_churn=s_churn,
                                     s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
                                     num_samples=num_samples, p_p=a_prompt, n_p=n_prompt, color_fix_type=color_fix_type,
-                                    use_linear_CFG=linear_CFG, use_linear_control_scale=linear_s_stage2,
+                                    use_linear_cfg=linear_CFG, use_linear_control_scale=linear_s_stage2,
                                     cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
 
     x_samples = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
