@@ -105,6 +105,26 @@ def llave_process(input_image, temperature, top_p, qs=None):
         captions = ['LLaVA is not available. Please add text manually.']
     return captions[0]
 
+def update_target_resolution(input_image, upscale):
+    # Read the input image dimensions
+    if input_image is None:
+        return ""
+    with Image.open(input_image) as img:
+        width, height = img.size
+
+    # Apply the upscale ratio
+    width *= upscale
+    height *= upscale
+
+    # Ensure both dimensions are at least 1024 pixels
+    if min(width, height) < 1024:
+        upscale_factor = 1024 / min(width, height)
+        width *= upscale_factor
+        height *= upscale_factor
+
+    # Update the target resolution label
+    return f"Estimated Output Resolution: {int(width)}x{int(height)} px, {width * height / 1e6:.2f} Mega Pixels"
+
 def read_image_metadata(image_path):
     # Check if the file exists
     if not os.path.exists(image_path):
@@ -459,6 +479,7 @@ with block:
                     with gr.Column():
                         gr.Markdown("<center>Stage1 Output</center>")
                         denoise_image = gr.Image(type="numpy", elem_id="image-s1", height=400, width=400)
+                target_res = gr.Textbox(label="OutPut Resolution - Dynamically Updated As You Change Upscale Ratio", value="")
                 prompt = gr.Textbox(label="Prompt", value="")
                 face_prompt = gr.Textbox(label="Face Prompt", placeholder="Optional, uses main prompt if not provided" , value="")
                 with gr.Accordion("Face Options", open=True):
@@ -504,7 +525,7 @@ with block:
 
 
             with gr.Column():
-                gr.Markdown("<center>Upscaled Images Output - V19</center>")
+                gr.Markdown("<center>Upscaled Images Output - V20</center>")
                 if not args.use_image_slider:
                     result_gallery = gr.Gallery(label='Output', show_label=False, elem_id="gallery1")
                 else:
@@ -595,6 +616,8 @@ with block:
 
     batch_upscale_button.click(fn=batch_upscale, inputs=stage2_ips_batch, outputs=outputlabel, show_progress=True, queue=True)
     batch_upscale_stop_button.click(fn=stop_batch_upscale, show_progress=True, queue=True)
+    input_image.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
+    upscale.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
 
 if args.port is not None:  # Check if the --port argument is provided
     block.launch(server_name=server_ip,server_port=args.port, share=args.share, inbrowser=True)
