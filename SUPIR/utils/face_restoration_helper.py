@@ -159,36 +159,28 @@ class FaceRestoreHelper(object):
         shape_predictor_5 = dlib.shape_predictor(landmark5_path)
         return face_detector, shape_predictor_5
 
-    def get_face_landmarks_5_dlib(self,
-                                  only_keep_largest=False,
-                                  scale=1):
-        det_faces = self.face_detector(self.input_img, scale)
-
-        if len(det_faces) == 0:
-            print('No face detected. Try to increase upsample_num_times.')
-            return 0
+    def get_face_landmarks_5(self,
+                             only_keep_largest=False,
+                             only_center_face=False,
+                             resize=None,
+                             blur_ratio=0.01,
+                             eye_dist_threshold=None):
+        if resize is None:
+            scale = 1
+            input_img = self.input_img
         else:
-            if only_keep_largest:
-                print('Detect several faces and only keep the largest.')
-                face_areas = []
-                for i in range(len(det_faces)):
-                    face_area = (det_faces[i].rect.right() - det_faces[i].rect.left()) * (
-                            det_faces[i].rect.bottom() - det_faces[i].rect.top())
-                    face_areas.append(face_area)
-                largest_idx = face_areas.index(max(face_areas))
-                self.det_faces = [det_faces[largest_idx]]
-            else:
-                self.det_faces = det_faces
+            h, w = self.input_img.shape[0:2]
+            scale = resize / min(h, w)
+            scale = max(1, scale)  # always scale up
+            h, w = int(h * scale), int(w * scale)
+            interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
+            input_img = cv2.resize(self.input_img, (w, h), interpolation=interp)
 
-        if len(self.det_faces) == 0:
-            return 0
+        # Convert input_img to a PyTorch tensor and move it to the correct device
+        input_img_tensor = torch.from_numpy(input_img).permute(2, 0, 1).unsqueeze(0).float().to(self.device)
 
-        for face in self.det_faces:
-            shape = self.shape_predictor_5(self.input_img, face.rect)
-            landmark = np.array([[part.x, part.y] for part in shape.parts()])
-            self.all_landmarks_5.append(landmark)
-
-        return len(self.all_landmarks_5)
+        with torch.no_grad():
+            bboxes = self.face_detector.detect_faces(input_img_tensor)
 
     def get_face_landmarks_5(self,
                              only_keep_largest=False,

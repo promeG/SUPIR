@@ -1,3 +1,4 @@
+import traceback
 from logging import PlaceHolder
 import os
 from pickle import TRUE
@@ -231,13 +232,15 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
             # Construct the full file path
             file_path = os.path.join(batch_process_folder, file_name)
 
-            with Image.open(input_image) as img:
-                image_array = np.asarray(img)
             if apply_stage_1:
                 image_array = stage1_process(file_path, gamma_correction)
+            else:
+                with Image.open(file_path) as img:
+                    image_array = np.asarray(img)
+
             stage_2_files.append((file_path, image_array))
         except Exception as e:
-            print(f"Error processing {file_name}: {e}")
+            print(f"Error processing {file_name}: {e} at {traceback.format_exc()}")
             continue
     all_to_cpu()
     for index, (file_path, image_array) in enumerate(stage_2_files):
@@ -250,7 +253,7 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
             # Open the image file and convert it to a NumPy array
 
             # Construct the path for the prompt text file
-            base_name = os.path.splitext(os.path.basename(file_name))[0]
+            base_name = os.path.splitext(os.path.basename(file_path))[0]
             prompt_file_path = os.path.join(batch_process_folder, f"{base_name}.txt")
 
             # Read the prompt from the text file
@@ -259,34 +262,27 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
                     prompt = f.read().strip()
 
             # Call the stage2_process method for the image
-            # image_path, image_array, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1,
-            # s_stage2,
-            # s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-            # linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-            # random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,
-            # dont_update_progress = False, outputs_folder = "outputs", batch_process_folder = "", progress = None
-            stage2_process(file_path, image_array, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps,
+            stage2_process(file_path, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps,
                            s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
                            gamma_correction, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2,
                            model_select, num_images, random_seed, apply_stage_1, face_resolution, apply_bg, apply_face,
-                           face_prompt, dont_update_progress=True, outputs_folder=outputs_folder, batch_process_folder=outputs_folder)
-
-            # Update progress
-
+                           face_prompt, dont_update_progress=True, outputs_folder=outputs_folder,
+                           batch_process_folder=outputs_folder, image_array=image_array)
 
         except Exception as e:
-            print(f"Error processing {file_name}: {e}")
+            print(f"Error processing {file_path}: {e} at {traceback.format_exc()}")
             continue
     batch_processing_val = False
     return "All Done"
 
 
-def stage2_process(image_path, image_array, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1,
+def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1,
                    s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                    linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
                    random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,
-                   dont_update_progress=False, outputs_folder="outputs", batch_process_folder="", progress=None):
+                   dont_update_progress=False, outputs_folder="outputs", batch_process_folder="", progress=None,
+                   image_array=None):
     global model
     if image_array is None:
         with Image.open(image_path) as img:
@@ -388,7 +384,7 @@ def stage2_process(image_path, image_array, prompt, a_prompt, n_prompt, num_samp
                                                 s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
                                                 num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
                                                 color_fix_type=color_fix_type,
-                                                use_linear_CFG=linear_CFG, use_linear_control_scale=linear_s_stage2,
+                                                use_linear_cfg=linear_CFG, use_linear_control_scale=linear_s_stage2,
                                                 cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
                 if face_resolution < 1024:
                     samples = samples[:, :, 512 - face_resolution // 2:512 + face_resolution // 2,
@@ -410,7 +406,7 @@ def stage2_process(image_path, image_array, prompt, a_prompt, n_prompt, num_samp
                                                 s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
                                                 num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
                                                 color_fix_type=color_fix_type,
-                                                use_linear_CFG=linear_CFG, use_linear_control_scale=linear_s_stage2,
+                                                use_linear_cfg=linear_CFG, use_linear_control_scale=linear_s_stage2,
                                                 cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
             else:
                 samples = lq
@@ -425,7 +421,6 @@ def stage2_process(image_path, image_array, prompt, a_prompt, n_prompt, num_samp
             # img_before_face_apply = Image.fromarray(_faces[0])
             # img_before_face_apply.save("applied_face.png", "PNG")
 
-
         else:
             caption = [bg_caption]
             samples = model.batchify_sample(lq, caption, num_steps=edm_steps, restoration_scale=s_stage1,
@@ -433,7 +428,7 @@ def stage2_process(image_path, image_array, prompt, a_prompt, n_prompt, num_samp
                                             s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
                                             num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
                                             color_fix_type=color_fix_type,
-                                            use_linear_CFG=linear_CFG, use_linear_control_scale=linear_s_stage2,
+                                            use_linear_cfg=linear_CFG, use_linear_control_scale=linear_s_stage2,
                                             cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
             x_samples = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
                 0, 255).astype(np.uint8)
@@ -691,7 +686,7 @@ with block:
     llave_button.click(fn=llava_process, inputs=[denoise_image, temperature, top_p, qs], outputs=[prompt])
     denoise_button.click(fn=stage1_process, inputs=[input_image, gamma_correction],
                          outputs=[denoise_image])
-    stage2_ips = [input_image, None, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
+    stage2_ips = [input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
                   random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt]
