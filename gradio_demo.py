@@ -225,7 +225,7 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
             llava_agent = None
             torch.cuda.empty_cache()
             gc.collect()
-        stage_2_files = []
+    stage_2_files = []
 
     print("Processing images (Stage 1)")
     for index, file_name in enumerate(image_files):
