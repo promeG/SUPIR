@@ -199,7 +199,7 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
                   random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, batch_process_llava, temperature, top_p, qs,
                   progress=gr.Progress()):
-    global batch_processing_val
+    global batch_processing_val, llava_agent
     batch_processing_val = True
     # Get the list of image files in the folder
     image_files = [file for file in os.listdir(batch_process_folder) if
@@ -219,11 +219,13 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
                 image_array = np.asarray(img)
                 caption = llava_process(image_array, temperature, top_p, qs, False)
                 captions.append(caption)
-    # Iterate over all image files in the folder
-    del llava_agent
-    torch.cuda.empty_cache()
-    gc.collect()
-    stage_2_files = []
+        # Iterate over all image files in the folder
+        if llava_agent:
+            del llava_agent
+            llava_agent = None
+            torch.cuda.empty_cache()
+            gc.collect()
+        stage_2_files = []
 
     print("Processing images (Stage 1)")
     for index, file_name in enumerate(image_files):
