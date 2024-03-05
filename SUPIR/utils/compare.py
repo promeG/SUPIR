@@ -22,5 +22,3 @@ def create_comparison_video(image_a, image_b, output_video, duration=5, frame_ra
     ]
 
     subprocess.run(ffmpeg_cmd, check=True)
-
-create_comparison_video("1.png", "2.png", "comparison_video.mp4")
