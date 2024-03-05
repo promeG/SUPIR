@@ -1,3 +1,4 @@
+import gc
 import traceback
 from logging import PlaceHolder
 import os
@@ -219,6 +220,9 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
                 caption = llava_process(image_array, temperature, top_p, qs, False)
                 captions.append(caption)
     # Iterate over all image files in the folder
+    del llava_agent
+    torch.cuda.empty_cache()
+    gc.collect()
     stage_2_files = []
 
     print("Processing images (Stage 1)")
