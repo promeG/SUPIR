@@ -469,7 +469,7 @@ def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale,
             progress(counter / num_images, desc=desc)
         print(desc)  # Print the progress
         start_time = time.time()  # Reset the start time for the next image
-        video_path=""
+        video_path = None
         for i, result in enumerate(results):
             base_filename = os.path.splitext(os.path.basename(image_path))[0]
             if len(base_filename) > 250:
@@ -493,6 +493,8 @@ def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale,
                 for key, value in event_dict.items():
                     f.write(f'{key}: {value}\n')
             video_path = os.path.abspath(video_path)
+            if not make_comparison_video:
+                video_path=None
             if make_comparison_video:
                 full_save_image_path = os.path.abspath(save_path)
                 create_comparison_video(image_path,full_save_image_path,video_path,video_duration,video_fps,video_width,video_height)
