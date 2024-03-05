@@ -4,8 +4,6 @@ from typing import Any, Optional
 
 import torch
 import torch.nn.functional as F
-# from einops._torch_specific import allow_ops_in_compiled_graph
-# allow_ops_in_compiled_graph()
 from einops import rearrange, repeat
 from packaging import version
 from torch import nn
@@ -271,7 +269,6 @@ class CrossAttention(nn.Module):
         """
         ## new
         with sdp_kernel(**BACKEND_MAP[self.backend]):
-            # print("dispatching into backend", self.backend, "q/k/v shape: ", q.shape, k.shape, v.shape)
             out = F.scaled_dot_product_attention(
                 q, k, v, attn_mask=mask
             )  # scale is dim_head ** -0.5 per default
@@ -291,10 +288,6 @@ class MemoryEfficientCrossAttention(nn.Module):
         self, query_dim, context_dim=None, heads=8, dim_head=64, dropout=0.0, **kwargs
     ):
         super().__init__()
-        # print(
-        #     f"Setting up {self.__class__.__name__}. Query dim is {query_dim}, context_dim is {context_dim} and using "
-        #     f"{heads} heads with a dimension of {dim_head}."
-        # )
         inner_dim = dim_head * heads
         context_dim = default(context_dim, query_dim)
 
