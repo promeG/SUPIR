@@ -316,7 +316,7 @@ def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale,
     if model is None:
         raise ValueError('Model not loaded')
     event_id = str(time.time_ns())
-    event_dict = {'event_id': event_id, 'localtime': time.ctime(), 'prompt': prompt, 'a_prompt': a_prompt,
+    event_dict = {'event_id': event_id, 'localtime': time.ctime(), 'prompt': prompt, 'base_model': args.ckpt,  'a_prompt': a_prompt,
                   'n_prompt': n_prompt, 'num_samples': num_samples, 'upscale': upscale, 'edm_steps': edm_steps,
                   's_stage1': s_stage1, 's_stage2': s_stage2, 's_cfg': s_cfg, 'seed': seed, 's_churn': s_churn,
                   's_noise': s_noise, 'color_fix_type': color_fix_type, 'diff_dtype': diff_dtype, 'ae_dtype': ae_dtype,
