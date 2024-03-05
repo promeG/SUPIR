@@ -27,6 +27,7 @@ from datetime import datetime
 from SUPIR.utils.face_restoration_helper import FaceRestoreHelper
 import os
 from PIL import Image
+from SUPIR.utils.compare import create_comparison_video
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1')
@@ -41,7 +42,8 @@ parser.add_argument("--encoder_tile_size", type=int, default=512)
 parser.add_argument("--decoder_tile_size", type=int, default=64)
 parser.add_argument("--load_8bit_llava", action='store_true', default=False)
 parser.add_argument("--ckpt", type=str, default='models/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors')
-parser.add_argument("--theme", type=str, default='d8ahazard/material_design_rd')
+parser.add_argument("--theme", type=str, default='gr.themes.Default')
+#parser.add_argument("--theme", type=str, default='d8ahazard/material_design_rd')
 parser.add_argument("--outputs_folder")
 args = parser.parse_args()
 server_ip = args.ip
@@ -148,6 +150,26 @@ def llava_process(input_image, temperature, top_p, qs=None, unload=True):
         all_to_cpu()
     return captions[0]
 
+def update_target_resolution(input_image, upscale):
+    # Read the input image dimensions
+    if input_image is None:
+        return ""
+    with Image.open(input_image) as img:
+        width, height = img.size
+
+    # Apply the upscale ratio
+    width *= upscale
+    height *= upscale
+
+    # Ensure both dimensions are at least 1024 pixels
+    if min(width, height) < 1024:
+        upscale_factor = 1024 / min(width, height)
+        width *= upscale_factor
+        height *= upscale_factor
+
+    # Update the target resolution label
+    return f"Estimated Output Resolution: {int(width)}x{int(height)} px, {width * height / 1e6:.2f} Mega Pixels"
+
 
 def read_image_metadata(image_path):
     # Check if the file exists
@@ -197,7 +219,7 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
                   s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-                  random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, batch_process_llava, temperature, top_p, qs,
+                  random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, batch_process_llava, temperature, top_p, qs, make_comparison_video, video_duration, video_fps, video_width, video_height,
                   progress=gr.Progress()):
     global batch_processing_val, llava_agent
     batch_processing_val = True
@@ -272,7 +294,7 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
                            s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
                            gamma_correction, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2,
                            model_select, num_images, random_seed, apply_stage_1, face_resolution, apply_bg, apply_face,
-                           face_prompt, dont_update_progress=True, outputs_folder=outputs_folder,
+                           face_prompt,make_comparison_video,video_duration, video_fps,video_width,video_height, dont_update_progress=True, outputs_folder=outputs_folder,
                            batch_process_folder=outputs_folder, image_array=image_array)
 
         except Exception as e:
@@ -286,7 +308,7 @@ def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale,
                    s_stage2,
                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                    linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-                   random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,
+                   random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,make_comparison_video,video_duration, video_fps,video_width,video_height,
                    dont_update_progress=False, outputs_folder="outputs", batch_process_folder="", progress=None,
                    image_array=None):
     global model
@@ -299,7 +321,7 @@ def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale,
     if model is None:
         raise ValueError('Model not loaded')
     event_id = str(time.time_ns())
-    event_dict = {'event_id': event_id, 'localtime': time.ctime(), 'prompt': prompt, 'a_prompt': a_prompt,
+    event_dict = {'event_id': event_id, 'localtime': time.ctime(), 'prompt': prompt, 'base_model': args.ckpt,  'a_prompt': a_prompt,
                   'n_prompt': n_prompt, 'num_samples': num_samples, 'upscale': upscale, 'edm_steps': edm_steps,
                   's_stage1': s_stage1, 's_stage2': s_stage2, 's_cfg': s_cfg, 'seed': seed, 's_churn': s_churn,
                   's_noise': s_noise, 'color_fix_type': color_fix_type, 'diff_dtype': diff_dtype, 'ae_dtype': ae_dtype,
@@ -359,6 +381,12 @@ def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale,
     if not os.path.exists(metadata_dir):
         os.makedirs(metadata_dir)
 
+
+    compare_videos_dir = os.path.join(output_dir, "compare_videos")
+    if not os.path.exists(compare_videos_dir):
+        os.makedirs(compare_videos_dir)
+
+    compare_video_path = None
     all_results = []
     counter = 1
     _faces = []
@@ -450,15 +478,17 @@ def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale,
             progress(counter / num_images, desc=desc)
         print(desc)  # Print the progress
         start_time = time.time()  # Reset the start time for the next image
-
+        video_path = None
         for i, result in enumerate(results):
             base_filename = os.path.splitext(os.path.basename(image_path))[0]
             if len(base_filename) > 250:
                 base_filename = base_filename[:250]
             save_path = os.path.join(output_dir, f'{base_filename}.png')
+            video_path = os.path.join(compare_videos_dir, f'{base_filename}.mp4')
             index = 1
             while os.path.exists(save_path):
                 save_path = os.path.join(output_dir, f'{base_filename}_{str(index).zfill(4)}.png')
+                video_path = os.path.join(compare_videos_dir, f'{base_filename}_{str(index).zfill(4)}.mp4')
                 index += 1
 
             # Embed metadata into the image
@@ -471,6 +501,12 @@ def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale,
             with open(metadata_path, 'w') as f:
                 for key, value in event_dict.items():
                     f.write(f'{key}: {value}\n')
+            video_path = os.path.abspath(video_path)
+            if not make_comparison_video:
+                video_path=None
+            if make_comparison_video:
+                full_save_image_path = os.path.abspath(save_path)
+                create_comparison_video(image_path,full_save_image_path,video_path,video_duration,video_fps,video_width,video_height)
 
         all_results.extend(results)
 
@@ -484,7 +520,7 @@ def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale,
             Image.fromarray(result).save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
     if not batch_processing_val:
         all_to_cpu()
-    return [input_image] + all_results, event_id, 3, '', seed, _faces
+    return [input_image] + all_results, event_id, 3, '', seed, _faces, video_path
 
 
 def load_and_reset(param_setting):
@@ -534,7 +570,7 @@ title_md = """
 
 1 Click Installer (auto download models as well) : https://www.patreon.com/posts/99176057
 
-[[Paper](https://arxiv.org/abs/2401.13627)] &emsp; [[Project Page](http://supir.xpixel.group/)] &emsp; [[How to play](https://github.com/Fanghua-Yu/SUPIR/blob/master/assets/DemoGuide.png)]
+FFmpeg Install Tutorial : https://youtu.be/-NjNy7afOQ0 &emsp; [[Paper](https://arxiv.org/abs/2401.13627)] &emsp; [[Project Page](http://supir.xpixel.group/)] &emsp; [[How to play](https://github.com/Fanghua-Yu/SUPIR/blob/master/assets/DemoGuide.png)]
 """
 
 claim_md = """
@@ -556,11 +592,12 @@ with block:
             with gr.Column():
                 with gr.Row(equal_height=True):
                     with gr.Column():
-                        gr.Markdown("<center>Input</center>")
+                        gr.Markdown("<center>Input Image To Upscale</center>")
                         input_image = gr.Image(type="filepath", elem_id="image-input", height=400, width=400)
                     with gr.Column():
-                        gr.Markdown("<center>Stage1 Output</center>")
-                        denoise_image = gr.Image(type="numpy", elem_id="image-s1", height=400, width=400)
+                        gr.Markdown("<center>Comparison Video Output</center>")
+                        comparison_video = gr.Video(height=400, width=400)
+                target_res = gr.Textbox(label="OutPut Resolution - Dynamically Updated As You Change Upscale Ratio", value="")
                 prompt = gr.Textbox(label="Prompt", value="")
                 face_prompt = gr.Textbox(label="Face Prompt", placeholder="Optional, uses main prompt if not provided",
                                          value="")
@@ -610,11 +647,19 @@ with block:
                                                     'deformed, lowres, over-smooth')
 
             with gr.Column():
-                gr.Markdown("<center>Upscaled Images Output - V19</center>")
+                gr.Markdown("<center>Upscaled Images Output - V22</center>")
                 if not args.use_image_slider:
                     result_gallery = gr.Gallery(label='Output', show_label=False, elem_id="gallery1")
                 else:
-                    result_gallery = ImageSlider(label='Output', interactive=True, show_label=False, elem_id="gallery1")
+                    result_gallery = ImageSlider(label='Output', interactive=True, show_download_button=True , show_label=False, elem_id="gallery1")
+                with gr.Row():
+                        make_comparison_video = gr.Checkbox(label="Generate Comparison Video (Input vs Output) (You need to have FFmpeg installed)", value=False)
+                        
+                with gr.Row():
+                        video_duration = gr.Textbox(label="Duration", value="5")
+                        video_fps = gr.Textbox(label="FPS", value="30")
+                        video_width = gr.Textbox(label="Width", value="1920")
+                        video_height = gr.Textbox(label="Height", value="1080")
                 with gr.Row():
                     with gr.Column():
                         denoise_button = gr.Button(value="Stage1 Run")
@@ -681,6 +726,12 @@ with block:
         with gr.Row():
             gr.Markdown(claim_md)
             event_id = gr.Textbox(label="Event ID", value="", visible=False)
+        with gr.Row():
+            gr.Markdown("<center>Stage1 Output</center>")
+            denoise_image = gr.Image(type="numpy", elem_id="image-s1", height=400, width=400)
+            denoise_button = gr.Button(value="Stage1 Run")
+            apply_stage_1 = gr.Checkbox(label="Apply Stage 1 Before Stage 2 - Works On Batch Too",
+                                        value=False)
 
     with gr.Tab("Image Metadata"):
         with gr.Row():
@@ -697,9 +748,9 @@ with block:
     stage2_ips = [input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-                  random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt]
+                  random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, make_comparison_video, video_duration, video_fps,video_width,video_height]
     diffusion_button.click(fn=stage2_process, inputs=stage2_ips,
-                           outputs=[result_gallery, event_id, fb_score, fb_text, seed, face_gallery],
+                           outputs=[result_gallery, event_id, fb_score, fb_text, seed, face_gallery, comparison_video],
                            show_progress=True, queue=True)
     restart_button.click(fn=load_and_reset, inputs=[param_setting],
                          outputs=[edm_steps, s_cfg, s_stage2, s_stage1, s_churn, s_noise, a_prompt, n_prompt,
@@ -709,11 +760,13 @@ with block:
                         edm_steps, s_stage1, s_stage2,
                         s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                         linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-                        random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, batch_process_llava, temperature, top_p, qs]
+                        random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, batch_process_llava, temperature, top_p, qs, make_comparison_video,video_duration, video_fps,video_width,video_height]
 
     batch_upscale_button.click(fn=batch_upscale, inputs=stage2_ips_batch, outputs=outputlabel, show_progress=True,
                                queue=True)
     batch_upscale_stop_button.click(fn=stop_batch_upscale, show_progress=True, queue=True)
+    input_image.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
+    upscale.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
 
 if args.port is not None:  # Check if the --port argument is provided
     block.launch(server_name=server_ip, server_port=args.port, share=args.share, inbrowser=True)
