@@ -2,3 +2,20 @@
     width: 100%;
     height: 100%;
 }
+
+.progress_label {
+    max-height: 40px;
+    min-height: 40px;
+    overflow: hidden;
+    font-size: 20px;
+}
+
+.progress_label .output-class {
+    font-size: 20px;
+    margin: 0;
+    padding: 0;
+    top: -5px;
+    position: relative;
+    display: block;
+    text-align: center;
+}

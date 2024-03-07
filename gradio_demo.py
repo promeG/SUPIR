@@ -6,7 +6,7 @@ import os
 import time
 import traceback
 from datetime import datetime
-from typing import Tuple
+from typing import Tuple, List, Any, Dict
 
 import einops
 import gradio as gr
@@ -22,6 +22,7 @@ from SUPIR.util import create_SUPIR_model
 from SUPIR.utils.compare import create_comparison_video
 from SUPIR.utils.face_restoration_helper import FaceRestoreHelper
 from SUPIR.utils.model_fetch import get_model
+from SUPIR.utils.status_container import StatusContainer
 from llava.llava_agent import LLavaAgent
 
 parser = argparse.ArgumentParser()
@@ -58,6 +59,8 @@ model = None
 llava_agent = None
 models_loaded = False
 
+status_container = StatusContainer()
+
 
 def load_face_helper():
     global face_helper
@@ -71,10 +74,11 @@ def load_face_helper():
         )
 
 
-def load_model():
+def load_model(selected_model, progress=None):
     global model
     if model is None:
-        # load SUPIR
+        if progress is not None:
+            progress(1 / 2, desc="Loading SUPIR...")
         model = create_SUPIR_model('options/SUPIR_v0.yaml', supir_sign='Q', device='cpu', ckpt=args.ckpt)
         if args.loading_half_params:
             model = model.half()
@@ -82,6 +86,26 @@ def load_model():
             model.init_tile_vae(encoder_tile_size=512, decoder_tile_size=64)
         model.first_stage_model.denoise_encoder_s1 = copy.deepcopy(model.first_stage_model.denoise_encoder)
         model.current_model = 'v0-Q'
+
+    if selected_model != model.current_model:
+        config = OmegaConf.load('options/SUPIR_v0_tiled.yaml')
+        device = 'cpu'
+        if model_select == 'v0-Q':
+            print('load v0-Q')
+            if progress is not None:
+                progress(1 / 2, desc="Updating SUPIR checkpoint...")
+            ckpt_q = torch.load(config.SUPIR_CKPT_Q, map_location=device)
+            model.load_state_dict(ckpt_q, strict=False)
+            model.current_model = 'v0-Q'
+        elif model_select == 'v0-F':
+            print('load v0-F')
+            if progress is not None:
+                progress(1 / 2, desc="Updating SUPIR checkpoint...")
+            ckpt_f = torch.load(config.SUPIR_CKPT_F, map_location=device)
+            model.load_state_dict(ckpt_f, strict=False)
+            model.current_model = 'v0-F'
+    if progress is not None:
+        progress(2 / 2, desc="SUPIR loaded.")
 
 
 def load_llava():
@@ -110,59 +134,22 @@ def to_gpu(elem_to_load, device):
     return elem_to_load
 
 
-def stage1_process(input_image, gamma_correction) -> gr.update:
-    global model
-    with Image.open(input_image) as img:
-        input_image = np.asarray(img)
-    load_model()
-    model = to_gpu(model, SUPIR_device)
-    lq = HWC3(input_image)
-    lq = fix_resize(lq, 512)
-    # stage1
-    lq = np.array(lq) / 255 * 2 - 1
-    lq = torch.tensor(lq, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
-    lq = model.batchify_denoise(lq, is_stage1=True)
-    lq = (lq[0].permute(1, 2, 0) * 127.5 + 127.5).cpu().numpy().round().clip(0, 255).astype(np.uint8)
-    # gamma correction
-    lq = lq / 255.0
-    lq = np.power(lq, gamma_correction)
-    lq *= 255.0
-    lq = lq.round().clip(0, 255).astype(np.uint8)
-    all_to_cpu()
-    return gr.update(value=lq, visible=True)
-
-
-def llava_process(input_image, temperature, top_p, qs=None, unload=True):
-    global llava_agent
-    load_llava()
-    llava_agent = to_gpu(llava_agent, LLaVA_device)
-    if use_llava:
-        LQ = HWC3(input_image)
-        LQ = Image.fromarray(LQ.astype('uint8'))
-        captions = llava_agent.gen_image_caption([LQ], temperature=temperature, top_p=top_p, qs=qs)
-    else:
-        captions = ['LLaVA is not available. Please add text manually.']
-    if unload:
-        all_to_cpu()
-    return captions[0]
-
-
-def update_target_resolution(input_image, upscale):
+def update_target_resolution(img, do_upscale):
     # Read the input image dimensions
-    if input_image is None:
+    if img is None:
         return ""
-    with Image.open(input_image) as img:
+    with Image.open(img) as img:
         width, height = img.size
 
-    # Apply the upscale ratio
-    width *= upscale
-    height *= upscale
+    # Apply the do_upscale ratio
+    width *= do_upscale
+    height *= do_upscale
 
     # Ensure both dimensions are at least 1024 pixels
     if min(width, height) < 1024:
-        upscale_factor = 1024 / min(width, height)
-        width *= upscale_factor
-        height *= upscale_factor
+        do_upscale_factor = 1024 / min(width, height)
+        width *= do_upscale_factor
+        height *= do_upscale_factor
 
     # Update the target resolution label
     return f"Estimated Output Resolution: {int(width)}x{int(height)} px, {width * height / 1e6:.2f} Megapixels"
@@ -202,179 +189,192 @@ def read_image_metadata(image_path):
     return metadata_str
 
 
+# prompt, stage_1_output_image, result_gallery, result_slider, event_id, fb_score, fb_text, seed, face_gallery, comparison_video
+def update_elements(status_label):
+    print(f"Label changed: {status_label}")
+    prompt_el = gr.update()
+    stage_1_output_image_el = gr.update()
+    result_gallery_el = gr.update()
+    result_slider_el = gr.update()
+    event_id_el = gr.update()
+    fb_score_el = gr.update()
+    fb_text_el = gr.update()
+    seed_el = gr.update()
+    face_gallery_el = gr.update()
+    comparison_video_el = gr.update()
+
+    if "Processing Complete" in status_label:
+        print(status_label)
+        if "LLaVA" in status_label:
+            status_container.llava_caption = status_container.llava_captions[0]
+            prompt_el = gr.update(value=status_container.llava_caption)
+            print(f"LLaVA caption: {status_container.llava_caption}")
+            result_gallery_el = gr.update(visible=False)
+        elif "Stage 1" in status_label:
+            print("Updating stage 1 output image")
+            out_image = status_container.image_data.values()[0]
+            stage_1_output_image_el = gr.update(value=out_image)
+            result_gallery_el = gr.update(visible=False)
+        elif "Stage 2" in status_label:
+            print("Updating stage 2 output image")
+            result_slider_el = gr.update(value=status_container.result_gallery, visible=True)
+            result_gallery_el = gr.update(visible=False)
+            event_id_el = gr.update(value=status_container.event_id)
+            fb_score_el = gr.update(value=status_container.fb_score)
+            fb_text_el = gr.update(value=status_container.fb_text)
+            seed_el = gr.update(value=status_container.seed)
+            face_gallery_el = gr.update(value=status_container.face_gallery)
+            comparison_video_el = gr.update(value=status_container.comparison_video)
+        elif "Batch" in status_label:
+            print("Updating batch outputs")
+            result_gallery_el = gr.update(value=status_container.result_gallery, visible=True)
+            result_slider_el = gr.update(visible=False)
+            event_id_el = gr.update(value=status_container.event_id)
+            fb_score_el = gr.update(value=status_container.fb_score)
+            fb_text_el = gr.update(value=status_container.fb_text)
+            seed_el = gr.update(value=status_container.seed)
+            face_gallery_el = gr.update(value=status_container.face_gallery)
+            comparison_video_el = gr.update(value=status_container.comparison_video)
+    return (prompt_el, stage_1_output_image_el, result_gallery_el, result_slider_el, event_id_el, fb_score_el,
+            fb_text_el, seed_el, face_gallery_el, comparison_video_el)
+
+
 batch_processing_val = False
 
 
-def stop_batch_upscale(progress=gr.Progress()):
-    global batch_processing_val
-    progress(1, f"Stop command giving please wait to stop")
-    print('\n***Stop command giving please wait to stop***\n')
-    batch_processing_val = False
+def llava_process_single(image, temp, p, question=None, unload=True, progress=gr.Progress()):
+    global status_container
+    status_container = StatusContainer()
+    with Image.open(image) as img:
+        image_data = np.array(img)
+        input_data = {image: image_data}
+    return llava_process(input_data, temp, p, question, unload, progress)
 
 
-def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps,
-                  s_stage1, s_stage2,
-                  s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                  linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-                  random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, batch_process_llava,
-                  temperature, top_p, qs, make_comparison_video, video_duration, video_fps, video_width, video_height,
-                  progress=gr.Progress()):
-    global batch_processing_val, llava_agent
-    batch_processing_val = True
-    # Get the list of image files in the folder
-    image_files = [file for file in os.listdir(batch_process_folder) if
-                   file.lower().endswith((".png", ".jpg", ".jpeg"))]
-    total_images = len(image_files)
-    main_prompt = prompt
-    captions = []
-    if batch_process_llava:
-        print('Processing LLaVA')
-        for index, file_name in enumerate(image_files):
+def llava_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], temp, p, question=None, unload=True,
+                  progress=None):
+    global llava_agent, status_container
+    output_captions = []
+    status_container.llava_captions = []
+    if use_llava:
+        total_steps = len(inputs.keys()) + (2 if unload else 1)
+        step = 1
+        if progress is not None:
+            progress(step / total_steps, desc="Loading LLaVA...")
+        load_llava()
+        llava_agent = to_gpu(llava_agent, LLaVA_device)
+        if progress is not None:
+            progress(step / total_steps, desc="LLaVA loaded, captioning images...")
+        for img_path, img in inputs.items():
+            if progress is not None:
+                progress(step / total_steps, desc=f"Processing image {step}/{len(inputs)} with LLaVA...")
+            lq = HWC3(img)
+            lq = Image.fromarray(lq.astype('uint8'))
+            captions = llava_agent.gen_image_caption([lq], temperature=temp, top_p=p, qs=question)
+            output_captions.append(captions[0])
+            status_container.llava_caption = captions[0]
+            step += 1
             if not batch_processing_val:  # Check if batch processing has been stopped
                 break
-            progress((index + 1) / total_images, f"Processing {index + 1}/{total_images} image with LLaVA")
-            # Construct the full file path
-            file_path = os.path.join(batch_process_folder, file_name)
-            with Image.open(file_path) as img:
-                image_array = np.asarray(img)
-                caption = llava_process(image_array, temperature, top_p, qs, False)
-                captions.append(caption)
-        # Iterate over all image files in the folder
-        if llava_agent:
-            del llava_agent
-            llava_agent = None
-            torch.cuda.empty_cache()
-            gc.collect()
-    stage_2_files = []
-
-    print("Processing images (Stage 1)")
-    for index, file_name in enumerate(image_files):
-        try:
-            if not batch_processing_val:  # Check if batch processing has been stopped
-                break
-            progress((index + 1) / total_images, f"Processing {index + 1}/{total_images} image (Stage 1)")
-            # Construct the full file path
-            file_path = os.path.join(batch_process_folder, file_name)
-            if apply_stage_1:
-                image_array = stage1_process(file_path, gamma_correction)
-            else:
-                with Image.open(file_path) as img:
-                    image_array = np.asarray(img)
-
-            stage_2_files.append((file_path, image_array))
-        except Exception as e:
-            print(f"Error processing {file_name}: {e} at {traceback.format_exc()}")
-            continue
-    all_to_cpu()
-
-    print("Processing images (Stage 2)")
-    for index, (file_path, image_array) in enumerate(stage_2_files):
-        try:
-            if not batch_processing_val:  # Check if batch processing has been stopped
-                break
-            progress((index + 1) / total_images, f"Processing {index + 1}/{total_images} image (Stage 2)")
-            # Construct the full file path
-            prompt = main_prompt
-            # Open the image file and convert it to a NumPy array
-
-            # Construct the path for the prompt text file
-            base_name = os.path.splitext(os.path.basename(file_path))[0]
-            prompt_file_path = os.path.join(batch_process_folder, f"{base_name}.txt")
-
-            if len(captions):
-                prompt = captions[index]
-            elif os.path.exists(prompt_file_path):
-                with open(prompt_file_path, "r", encoding="utf-8") as f:
-                    prompt = f.read().strip()
-
-            # Call the stage2_process method for the image
-            stage2_process(file_path, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps,
-                           s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
-                           gamma_correction, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2,
-                           model_select, num_images, random_seed, apply_stage_1, face_resolution, apply_bg, apply_face,
-                           face_prompt, make_comparison_video, video_duration, video_fps, video_width, video_height,
-                           dont_update_progress=True, outputs_folder=outputs_folder,
-                           batch_process_folder=outputs_folder, image_array=image_array)
-
-        except Exception as e:
-            print(f"Error processing {file_path}: {e} at {traceback.format_exc()}")
-            continue
-    batch_processing_val = False
-    return "All Done"
+        if progress is not None and unload:
+            progress(step / total_steps, desc="Unloading LLaVA...")
+            llava_agent = llava_agent.to('cpu')
+            step += 1
+            progress(step / total_steps, desc="LLaVA processing complete.")
+        status_container.llava_captions = output_captions
+        return f"LLaVA Processing Complete: {len(inputs)} images processed"
+    else:
+        status_container.llava_caption = ""
+        return "LLaVA is not available."
 
 
-def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1,
-                   s_stage2,
-                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-                   random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,
-                   make_comparison_video, video_duration, video_fps, video_width, video_height,
-                   dont_update_progress=False, outputs_folder="outputs", batch_process_folder="", progress=None,
-                   image_array=None):
+def stage1_process_single(image, gamma, unload=True, progress=gr.Progress()):
+    global status_container
+    status_container = StatusContainer()
+    with Image.open(image) as img:
+        image_data = np.array(img)
+        input_data = {image: image_data}
+    return stage1_process(input_data, gamma, unload, progress)
+
+
+def stage1_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], gamma, unload=True, progress=None) -> str:
     global model
-    if image_array is None:
-        with Image.open(image_path) as img:
-            image_array = np.asarray(img)
-    input_image = image_array
-    load_model()
+    global status_container
+    output_data = {}
+    total_steps = len(inputs.keys()) + (1 if unload else 0)
+    step = 0
+
+    load_model(model_select, progress)
+    model = to_gpu(model, SUPIR_device)
+
+    for image_path, img in inputs.items():
+        step += 1
+        if progress is not None:
+            progress(step / total_steps, desc=f"Processing image {step}/{len(inputs)}...")
+        lq = HWC3(img)
+        lq = fix_resize(lq, 512)
+        # stage1
+        lq = np.array(lq) / 255 * 2 - 1
+        lq = torch.tensor(lq, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
+        lq = model.batchify_denoise(lq, is_stage1=True)
+        lq = (lq[0].permute(1, 2, 0) * 127.5 + 127.5).cpu().numpy().round().clip(0, 255).astype(np.uint8)
+        # gamma correction
+        lq = lq / 255.0
+        lq = np.power(lq, gamma)
+        lq *= 255.0
+        lq = lq.round().clip(0, 255).astype(np.uint8)
+        status_container.stage_1_output_image = lq
+        output_data[image_path] = lq
+        if not batch_processing_val:  # Check if batch processing has been stopped
+            break
+    if unload:
+        step += 1
+        if progress is not None:
+            progress(step / total_steps, desc="Unloading models...")
+        all_to_cpu()
+    status_container.image_data = output_data
+    return f"Stage 1 Processing Complete: processed {len(inputs)} images"
+
+
+def stage2_process_single(image, p, ap, n_p, ns, us, edms, sstage1, sstage2, scfg, sseed, schurn, snoise, cfix_type,
+                          ddtype, aedtype, g_correction, l_cfg, ls_stage2, slinear_cfg, slinear_stage2, modelselect,
+                          n_images, r_seed, a_stage_1, f_resolution, a_bg, a_face, f_prompt, make_video, v_duration,
+                          v_fps, v_width, v_height):
+    global status_container
+    status_container = StatusContainer()
+    with Image.open(image) as img:
+        image_data = np.array(img)
+        input_data = {image: image_data}
+    captions = [ap]
+    return stage2_process(input_data, captions, ap, n_p, ns, us, edms, sstage1, sstage2, scfg, sseed, schurn, snoise,
+                          cfix_type,
+                          ddtype, aedtype, g_correction, l_cfg, ls_stage2, slinear_cfg, slinear_stage2, modelselect,
+                          n_images, r_seed, a_stage_1, f_resolution, a_bg, a_face, f_prompt, make_video, v_duration,
+                          v_fps, v_width, v_height, progress=gr.Progress())
+
+
+def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions, a_prompt, n_prompt, num_samples,
+                   upscale, edm_steps,
+                   s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
+                   gamma_correction, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,
+                   num_images, random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,
+                   make_comparison_video, video_duration, video_fps, video_width, video_height,
+                   dont_update_progress=False, out_folder="outputs", batch_process_folder="", unload=True,
+                   progress=gr.Progress()):
+    global model, status_container, event_id
+
+    load_model(model_select, progress)
     to_gpu(model, SUPIR_device)
-    if model is None:
-        raise ValueError('Model not loaded')
-    event_id = str(time.time_ns())
-    event_dict = {'event_id': event_id, 'localtime': time.ctime(), 'prompt': prompt, 'base_model': args.ckpt,
-                  'a_prompt': a_prompt,
-                  'n_prompt': n_prompt, 'num_samples': num_samples, 'upscale': upscale, 'edm_steps': edm_steps,
-                  's_stage1': s_stage1, 's_stage2': s_stage2, 's_cfg': s_cfg, 'seed': seed, 's_churn': s_churn,
-                  's_noise': s_noise, 'color_fix_type': color_fix_type, 'diff_dtype': diff_dtype, 'ae_dtype': ae_dtype,
-                  'gamma_correction': gamma_correction, 'linear_CFG': linear_CFG, 'linear_s_stage2': linear_s_stage2,
-                  'spt_linear_CFG': spt_linear_CFG, 'spt_linear_s_stage2': spt_linear_s_stage2,
-                  'model_select': model_select, 'apply_stage_1': apply_stage_1, 'face_resolution': face_resolution,
-                  'apply_bg': apply_bg, 'face_prompt': face_prompt}
-
-    if model_select != model.current_model:
-        config = OmegaConf.load('options/SUPIR_v0_tiled.yaml')
-        device = 'cpu'
-        if model_select == 'v0-Q':
-            print('load v0-Q')
-            ckpt_Q = torch.load(config.SUPIR_CKPT_Q, map_location=device)
-            model.load_state_dict(ckpt_Q, strict=False)
-            model.current_model = 'v0-Q'
-        elif model_select == 'v0-F':
-            print('load v0-F')
-            ckpt_F = torch.load(config.SUPIR_CKPT_F, map_location=device)
-            model.load_state_dict(ckpt_F, strict=False)
-            model.current_model = 'v0-F'
-    input_image = HWC3(input_image)
-    input_image = upscale_image(input_image, upscale, unit_resolution=32,
-                                min_size=1024)
-
-    lq = np.array(input_image)
-    load_face_helper()
-    if face_helper is None or not isinstance(face_helper, FaceRestoreHelper):
-        raise ValueError('Face helper not loaded')
-    face_helper.clean_all()
-    face_helper.read_image(lq)
-    # get face landmarks for each face
-    face_helper.get_face_landmarks_5(only_center_face=False, resize=640, eye_dist_threshold=5)
-    face_helper.align_warp_face()
-
-    lq = lq / 255 * 2 - 1
-    lq = torch.tensor(lq, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
-
-    bg_caption = prompt
-    face_captions = prompt
-    if len(face_prompt) > 1:
-        face_captions = face_prompt
-
     model.ae_dtype = convert_dtype(ae_dtype)
     model.model.dtype = convert_dtype(diff_dtype)
-    if len(outputs_folder) < 1:
-        outputs_folder = "outputs"
-    if args.outputs_folder:
-        outputs_folder = args.outputs_folder
+
+    if len(out_folder) < 1:
+        out_folder = "outputs"
+    if args.out_folder:
+        out_folder = args.out_folder
     if len(batch_process_folder) > 1:
-        outputs_folder = batch_process_folder
-    output_dir = os.path.join(outputs_folder)
+        out_folder = batch_process_folder
+    output_dir = os.path.join(out_folder)
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
@@ -386,57 +386,126 @@ def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale,
     if not os.path.exists(compare_videos_dir):
         os.makedirs(compare_videos_dir)
 
-    compare_video_path = None
-    all_results = []
-    counter = 1
-    _faces = []
-    if not dont_update_progress and progress is not None:
-        progress(0 / num_images, desc="Generating images")
-    to_gpu(face_helper, SUPIR_device)
-    for _ in range(num_images):
-        if random_seed or num_images > 1:
-            seed = np.random.randint(0, 2147483647)
-        start_time = time.time()  # Track the start time
+    idx = 0
+
+    output_data = {}
+
+    for image_path, img in inputs:
+        output_data[image_path] = []
+        all_results = []
+        img_prompt = captions[idx]
+        event_id = str(time.time_ns())
+        event_dict = {'event_id': event_id, 'localtime': time.ctime(), 'prompt': img_prompt, 'base_model': args.ckpt,
+                      'a_prompt': a_prompt,
+                      'n_prompt': n_prompt, 'num_samples': num_samples, 'upscale': upscale, 'edm_steps': edm_steps,
+                      's_stage1': s_stage1, 's_stage2': s_stage2, 's_cfg': s_cfg, 'seed': seed, 's_churn': s_churn,
+                      's_noise': s_noise, 'color_fix_type': color_fix_type, 'diff_dtype': diff_dtype,
+                      'ae_dtype': ae_dtype,
+                      'gamma_correction': gamma_correction, 'linear_CFG': linear_CFG,
+                      'linear_s_stage2': linear_s_stage2,
+                      'spt_linear_CFG': spt_linear_CFG, 'spt_linear_s_stage2': spt_linear_s_stage2,
+                      'model_select': model_select, 'apply_stage_1': apply_stage_1, 'face_resolution': face_resolution,
+                      'apply_bg': apply_bg, 'face_prompt': face_prompt}
+
+        img = HWC3(img)
+        img = upscale_image(img, upscale, unit_resolution=32, min_size=1024)
+        lq = np.array(img)
+
+        counter = 1
+        _faces = []
+        if not dont_update_progress and progress is not None:
+            progress(0 / num_images, desc="Generating images")
+        video_path = None
+
+        # Only load face model if face restoration is enabled
         if apply_face:
-            faces = []
-            for face in face_helper.cropped_faces:
-                _faces.append(face)
-                face = np.array(face) / 255 * 2 - 1
-                face = torch.tensor(face, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :,
-                       :]
-                faces.append(face)
+            load_face_helper()
+            if face_helper is None or not isinstance(face_helper, FaceRestoreHelper):
+                raise ValueError('Face helper not loaded')
+            face_helper.clean_all()
+            face_helper.read_image(lq)
+            # get face landmarks for each face
+            face_helper.get_face_landmarks_5(only_center_face=False, resize=640, eye_dist_threshold=5)
+            face_helper.align_warp_face()
 
-            for face, caption in zip(faces, face_captions):
-                caption = [caption]
+            lq = lq / 255 * 2 - 1
+            lq = torch.tensor(lq, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
 
-                from torch.nn.functional import interpolate
-                face = interpolate(face, size=face_resolution, mode='bilinear', align_corners=False)
-                if face_resolution < 1024:
-                    face = torch.nn.functional.pad(face, (512 - face_resolution // 2, 512 - face_resolution // 2,
-                                                          512 - face_resolution // 2, 512 - face_resolution // 2),
-                                                   'constant', 0)
+            bg_caption = img_prompt
+            face_captions = img_prompt
+            if len(face_prompt) > 1:
+                face_captions = face_prompt
+            to_gpu(face_helper, SUPIR_device)
 
-                samples = model.batchify_sample(face, caption, num_steps=edm_steps, restoration_scale=s_stage1,
-                                                s_churn=s_churn,
-                                                s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
-                                                num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
-                                                color_fix_type=color_fix_type,
-                                                use_linear_cfg=linear_CFG, use_linear_control_scale=linear_s_stage2,
-                                                cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
-                if face_resolution < 1024:
-                    samples = samples[:, :, 512 - face_resolution // 2:512 + face_resolution // 2,
-                              512 - face_resolution // 2:512 + face_resolution // 2]
-                samples = interpolate(samples, size=face_helper.face_size, mode='bilinear', align_corners=False)
-                x_samples = (
-                        einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
+        for _ in range(num_images):
+            if random_seed or num_images > 1:
+                seed = np.random.randint(0, 2147483647)
+            start_time = time.time()  # Track the start time
+
+            if apply_face:
+                faces = []
+                for face in face_helper.cropped_faces:
+                    _faces.append(face)
+                    face = np.array(face) / 255 * 2 - 1
+                    face = torch.tensor(face, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3,
+                           :,
+                           :]
+                    faces.append(face)
+
+                for face, caption in zip(faces, face_captions):
+                    caption = [caption]
+
+                    from torch.nn.functional import interpolate
+                    face = interpolate(face, size=face_resolution, mode='bilinear', align_corners=False)
+                    if face_resolution < 1024:
+                        face = torch.nn.functional.pad(face, (512 - face_resolution // 2, 512 - face_resolution // 2,
+                                                              512 - face_resolution // 2, 512 - face_resolution // 2),
+                                                       'constant', 0)
+
+                    samples = model.batchify_sample(face, caption, num_steps=edm_steps, restoration_scale=s_stage1,
+                                                    s_churn=s_churn,
+                                                    s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
+                                                    num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
+                                                    color_fix_type=color_fix_type,
+                                                    use_linear_cfg=linear_CFG, use_linear_control_scale=linear_s_stage2,
+                                                    cfg_scale_start=spt_linear_CFG,
+                                                    control_scale_start=spt_linear_s_stage2)
+                    if face_resolution < 1024:
+                        samples = samples[:, :, 512 - face_resolution // 2:512 + face_resolution // 2,
+                                  512 - face_resolution // 2:512 + face_resolution // 2]
+                    samples = interpolate(samples, size=face_helper.face_size, mode='bilinear', align_corners=False)
+                    x_samples = (
+                            einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
+                        0, 255).astype(np.uint8)
+
+                    face_helper.add_restored_face(x_samples[0])
+                    _faces.append(x_samples[0])
+                    # img_before_face_apply = Image.fromarray(x_samples[0])
+                    # img_before_face_apply.save("applied_face_1.png", "PNG")
+
+                if apply_bg:
+                    caption = [bg_caption]
+                    samples = model.batchify_sample(lq, caption, num_steps=edm_steps, restoration_scale=s_stage1,
+                                                    s_churn=s_churn,
+                                                    s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
+                                                    num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
+                                                    color_fix_type=color_fix_type,
+                                                    use_linear_cfg=linear_CFG, use_linear_control_scale=linear_s_stage2,
+                                                    cfg_scale_start=spt_linear_CFG,
+                                                    control_scale_start=spt_linear_s_stage2)
+                else:
+                    samples = lq
+                _bg = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
                     0, 255).astype(np.uint8)
-
-                face_helper.add_restored_face(x_samples[0])
-                _faces.append(x_samples[0])
-                # img_before_face_apply = Image.fromarray(x_samples[0])
-                # img_before_face_apply.save("applied_face_1.png", "PNG")
-
-            if apply_bg:
+                # img_before_face_apply = Image.fromarray(_bg[0])
+                # img_before_face_apply.save("before_face_apply.png", "PNG")
+                face_helper.get_inverse_affine(None)
+                results = [face_helper.paste_faces_to_input_image(upsample_img=_bg[0])]
+                # img_before_face_apply = Image.fromarray(results[0])
+                # img_before_face_apply.save("after_face_apply.png", "PNG")
+                # img_before_face_apply = Image.fromarray(_faces[0])
+                # img_before_face_apply.save("applied_face.png", "PNG")
+            else:
                 caption = [bg_caption]
                 samples = model.batchify_sample(lq, caption, num_steps=edm_steps, restoration_scale=s_stage1,
                                                 s_churn=s_churn,
@@ -445,101 +514,155 @@ def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale,
                                                 color_fix_type=color_fix_type,
                                                 use_linear_cfg=linear_CFG, use_linear_control_scale=linear_s_stage2,
                                                 cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
-            else:
-                samples = lq
-            _bg = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
-                0, 255).astype(np.uint8)
-            # img_before_face_apply = Image.fromarray(_bg[0])
-            # img_before_face_apply.save("before_face_apply.png", "PNG")
-            face_helper.get_inverse_affine(None)
-            results = [face_helper.paste_faces_to_input_image(upsample_img=_bg[0])]
-            # img_before_face_apply = Image.fromarray(results[0])
-            # img_before_face_apply.save("after_face_apply.png", "PNG")
-            # img_before_face_apply = Image.fromarray(_faces[0])
-            # img_before_face_apply.save("applied_face.png", "PNG")
+                x_samples = (
+                        einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
+                    0, 255).astype(np.uint8)
+                results = [x_samples[i] for i in range(num_samples)]
 
-        else:
-            caption = [bg_caption]
-            samples = model.batchify_sample(lq, caption, num_steps=edm_steps, restoration_scale=s_stage1,
-                                            s_churn=s_churn,
-                                            s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
-                                            num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
-                                            color_fix_type=color_fix_type,
-                                            use_linear_cfg=linear_CFG, use_linear_control_scale=linear_s_stage2,
-                                            cfg_scale_start=spt_linear_CFG, control_scale_start=spt_linear_s_stage2)
-            x_samples = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
-                0, 255).astype(np.uint8)
-            results = [x_samples[i] for i in range(num_samples)]
+                image_generation_time = time.time() - start_time
+                desc = f"Generated image {counter}/{num_images} in {image_generation_time:.2f} seconds"
+                counter += 1
+                if not dont_update_progress and progress is not None:
+                    progress(counter / num_images, desc=desc)
+                print(desc)  # Print the progress
+                start_time = time.time()  # Reset the start time for the next image
 
-        image_generation_time = time.time() - start_time
-        desc = f"Generated image {counter}/{num_images} in {image_generation_time:.2f} seconds"
-        counter += 1
-        if not dont_update_progress and progress is not None:
-            progress(counter / num_images, desc=desc)
-        print(desc)  # Print the progress
-        start_time = time.time()  # Reset the start time for the next image
-        video_path = None
-        for i, result in enumerate(results):
-            base_filename = os.path.splitext(os.path.basename(image_path))[0]
-            if len(base_filename) > 250:
-                base_filename = base_filename[:250]
-            save_path = os.path.join(output_dir, f'{base_filename}.png')
-            video_path = os.path.join(compare_videos_dir, f'{base_filename}.mp4')
-            index = 1
-            while os.path.exists(save_path):
-                save_path = os.path.join(output_dir, f'{base_filename}_{str(index).zfill(4)}.png')
-                video_path = os.path.join(compare_videos_dir, f'{base_filename}_{str(index).zfill(4)}.mp4')
-                index += 1
+            for i, result in enumerate(results):
+                base_filename = os.path.splitext(os.path.basename(image_path))[0]
+                if len(base_filename) > 250:
+                    base_filename = base_filename[:250]
+                save_path = os.path.join(output_dir, f'{base_filename}.png')
+                video_path = os.path.join(compare_videos_dir, f'{base_filename}.mp4')
+                index = 1
+                while os.path.exists(save_path):
+                    save_path = os.path.join(output_dir, f'{base_filename}_{str(index).zfill(4)}.png')
+                    video_path = os.path.join(compare_videos_dir, f'{base_filename}_{str(index).zfill(4)}.mp4')
+                    index += 1
 
-            # Embed metadata into the image
-            img = Image.fromarray(result)
-            meta = PngImagePlugin.PngInfo()
-            for key, value in event_dict.items():
-                meta.add_text(key, str(value))
-            img.save(save_path, "PNG", pnginfo=meta)
-            metadata_path = os.path.join(metadata_dir, f'{os.path.splitext(os.path.basename(save_path))[0]}.txt')
-            with open(metadata_path, 'w') as f:
+                # Embed metadata into the image
+                img = Image.fromarray(result)
+                meta = PngImagePlugin.PngInfo()
                 for key, value in event_dict.items():
-                    f.write(f'{key}: {value}\n')
-            video_path = os.path.abspath(video_path)
-            if not make_comparison_video:
-                video_path = None
-            if make_comparison_video:
-                full_save_image_path = os.path.abspath(save_path)
-                create_comparison_video(image_path, full_save_image_path, video_path, video_duration, video_fps,
-                                        video_width, video_height)
+                    meta.add_text(key, str(value))
+                img.save(save_path, "PNG", pnginfo=meta)
+                metadata_path = os.path.join(metadata_dir,
+                                             f'{os.path.splitext(os.path.basename(save_path))[0]}.txt')
+                with open(metadata_path, 'w') as f:
+                    for key, value in event_dict.items():
+                        f.write(f'{key}: {value}\n')
+                video_path = os.path.abspath(video_path)
+                if not make_comparison_video:
+                    video_path = None
+                if make_comparison_video:
+                    full_save_image_path = os.path.abspath(save_path)
+                    create_comparison_video(image_path, full_save_image_path, video_path, video_duration, video_fps,
+                                            video_width, video_height)
 
-        all_results.extend(results)
+                all_results.extend(results)
 
-    if args.log_history:
-        os.makedirs(f'./history/{event_id[:5]}/{event_id[5:]}', exist_ok=True)
-        with open(f'./history/{event_id[:5]}/{event_id[5:]}/logs.txt', 'w') as f:
-            f.write(str(event_dict))
-        f.close()
-        Image.fromarray(input_image).save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
-        for i, result in enumerate(all_results):
-            Image.fromarray(result).save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
-    if not batch_processing_val:
+        output_data[image_path] = all_results
+        status_container.prompt = img_prompt
+        status_container.result_gallery = all_results
+        status_container.event_id = event_id
+        status_container.seed = seed
+        status_container.face_gallery = _faces
+        status_container.comparison_video = video_path
+
+        if args.log_history:
+            os.makedirs(f'./history/{event_id[:5]}/{event_id[5:]}', exist_ok=True)
+            with open(f'./history/{event_id[:5]}/{event_id[5:]}/logs.txt', 'w') as f:
+                f.write(str(event_dict))
+            f.close()
+            Image.fromarray(img).save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
+            for i, result in enumerate(all_results):
+                Image.fromarray(result).save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
+        if not batch_processing_val:  # Check if batch processing has been stopped
+            break
+
+    status_container.result_gallery = output_data
+    if not batch_processing_val or unload:
         all_to_cpu()
-    return [input_image] + all_results, event_id, 3, '', seed, _faces, video_path
+
+    return f"Stage 2 Processing Complete: Processed {num_images} images."
+
+
+def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n_prompt, num_samples, upscale,
+                  edm_steps, s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
+                  gamma_correction, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,
+                  num_images, random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,
+                  batch_process_llava, temperature, top_p, qs, make_comparison_video, video_duration, video_fps,
+                  video_width, video_height, progress=gr.Progress()):
+    
+    global batch_processing_val, llava_agent
+    batch_processing_val = True
+    # Get the list of image files in the folder
+    image_files = [file for file in os.listdir(batch_process_folder) if
+                   file.lower().endswith((".png", ".jpg", ".jpeg"))]
+
+    total_images = len(image_files)
+
+    # Make a dictionary to store the image data and path
+    img_data = {}
+    for file in image_files:
+        img = Image.open(os.path.join(batch_process_folder, file))
+        img_data[file] = np.array(img)
+
+    # Store it globally
+    status_container.image_data = img_data
+
+    # Create an array of captions
+    if batch_process_llava:
+        print('Processing LLaVA')
+        llava_process(img_data, temperature, top_p, qs, unload=True, progress=progress)
+        captions = status_container.llava_captions
+    else:
+        captions = [main_prompt] * total_images
+
+    if not batch_processing_val:
+        return "Batch Processing Complete: Cancelled"
+    
+    if apply_stage_1:
+        print("Processing images (Stage 1)")
+        stage1_process(img_data, gamma_correction, unload=True, progress=progress)
+    
+    if not batch_processing_val:
+        return "Batch Processing Complete: Cancelled"
+    
+    print("Processing images (Stage 2)")
+    stage2_process(img_data, captions, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2, s_cfg,
+                   seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction, linear_CFG,
+                   linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images, random_seed,
+                   apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, make_comparison_video,
+                   video_duration, video_fps, video_width, video_height, dont_update_progress=True,
+                   out_folder=outputs_folder, batch_process_folder=batch_process_folder, unload=True, progress=progress)
+    
+    batch_processing_val = False
+    return f"Batch Processing Complete: processed {num_images} images"
+
+
+def stop_batch_upscale(progress=gr.Progress()):
+    global batch_processing_val
+    progress(1, f"Stop command giving please wait to stop")
+    print('\n***Stop command giving please wait to stop***\n')
+    batch_processing_val = False
 
 
 def load_and_reset(param_setting):
-    edm_steps = 50
-    s_stage2 = 1.0
-    s_stage1 = -1.0
-    s_churn = 5
-    s_noise = 1.003
-    a_prompt = 'Cinematic, High Contrast, highly detailed, taken using a Canon EOS R camera, hyper detailed photo - ' \
+    e_steps = 50
+    sstage2 = 1.0
+    sstage1 = -1.0
+    schurn = 5
+    snoise = 1.003
+    ap = 'Cinematic, High Contrast, highly detailed, taken using a Canon EOS R camera, hyper detailed photo - ' \
                'realistic maximum detail, 32k, Color Grading, ultra HD, extreme meticulous detailing, skin pore ' \
                'detailing, hyper sharpness, perfect without deformations.'
-    n_prompt = 'painting, oil painting, illustration, drawing, art, sketch, oil painting, cartoon, CG Style, ' \
+    np = 'painting, oil painting, illustration, drawing, art, sketch, oil painting, cartoon, CG Style, ' \
                '3D render, unreal engine, blurring, dirty, messy, worst quality, low quality, frames, watermark, ' \
                'signature, jpeg artifacts, deformed, lowres, over-smooth'
-    color_fix_type = 'Wavelet'
-    spt_linear_s_stage2 = 0.0
-    linear_s_stage2 = False
-    linear_CFG = True
+    cfix_type = 'Wavelet'
+    l_s_stage2 = 0.0
+    l_s_s_stage2 = False
+    l_cfg = True
     if param_setting == "Quality":
         s_cfg = 7.5
         spt_linear_CFG = 4.0
@@ -548,17 +671,16 @@ def load_and_reset(param_setting):
         spt_linear_CFG = 1.0
     else:
         raise NotImplementedError
-    return edm_steps, s_cfg, s_stage2, s_stage1, s_churn, s_noise, a_prompt, n_prompt, color_fix_type, linear_CFG, \
-        linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2
+    return e_steps, s_cfg, sstage2, sstage1, schurn, snoise, ap, np, cfix_type, l_cfg, l_s_stage2, spt_linear_CFG, l_s_s_stage2
 
 
-def submit_feedback(event_id, fb_score, fb_text):
+def submit_feedback(evt_id, f_score, f_text):
     if args.log_history:
-        with open(f'./history/{event_id[:5]}/{event_id[5:]}/logs.txt', 'r') as f:
+        with open(f'./history/{evt_id[:5]}/{evt_id[5:]}/logs.txt', 'r') as f:
             event_dict = eval(f.read())
         f.close()
-        event_dict['feedback'] = {'score': fb_score, 'text': fb_text}
-        with open(f'./history/{event_id[:5]}/{event_id[5:]}/logs.txt', 'w') as f:
+        event_dict['feedback'] = {'score': f_score, 'text': f_text}
+        with open(f'./history/{evt_id[:5]}/{evt_id[5:]}/logs.txt', 'w') as f:
             f.write(str(event_dict))
         f.close()
         return 'Submit successfully, thank you for your comments!'
@@ -606,31 +728,30 @@ with block:
             start_batch_button = gr.Button(value="Start Batch")
             stop_batch_button = gr.Button(value="Cancel Batch")
         with gr.Row():
-            output_label = gr.Label(label="Progress")
+            output_label = gr.Label(label="Progress", elem_classes=["progress_label"])
         with gr.Row(equal_height=True):
             with gr.Column() as input_col:
                 input_image = gr.Image(type="filepath", elem_id="image-input", label="Input Image",
-                                       elem_classes=["preview_box"])
+                                       elem_classes=["preview_box"], height=300, sources=["upload"])
             with gr.Column(visible=False) as stage_1_out_col:
                 stage_1_output_image = gr.Image(type="numpy", elem_id="image-s1", label="Stage1 Output",
-                                                elem_classes=["preview_box"])
+                                                elem_classes=["preview_box"], height=300, interactive=False)
             with gr.Column(visible=False) as comparison_video_col:
-                comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"])
+                comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"], height=300)
             with gr.Column() as result_col:
-                if not args.use_image_slider:
-                    result_gallery = gr.Gallery(label='Output', elem_id="gallery1", elem_classes=["preview_box"])
-                else:
-                    result_gallery = ImageSlider(label='Output', interactive=True, show_download_button=True,
-                                                 elem_id="gallery1", elem_classes=["preview_box"])
+                result_gallery = gr.Gallery(label='Output', elem_id="gallery1", elem_classes=["preview_box"], height=300, visible=False)
+                result_slider = ImageSlider(label='Output', interactive=False, show_download_button=True,
+                                                 elem_id="gallery1", elem_classes=["preview_box"], height=300)
         with gr.Row():
             with gr.Column():
                 with gr.Accordion("General options", open=True):
                     upscale = gr.Slider(label="Upscale Size (Stage 2)", minimum=1, maximum=8, value=1, step=0.1)
-                    target_res = gr.Textbox(label="Output Resolution", value="")
                     prompt = gr.Textbox(label="Prompt", value="")
                     face_prompt = gr.Textbox(label="Face Prompt",
                                              placeholder="Optional, uses main prompt if not provided",
                                              value="")
+                    target_res = gr.Textbox(label="Output Resolution", value="", interactive=False)
+
                 with gr.Accordion("Stage1 options", open=False):
                     gamma_correction = gr.Slider(label="Gamma Correction", minimum=0.1, maximum=2.0, value=1.0,
                                                  step=0.1)
@@ -694,7 +815,7 @@ with block:
                                                         label="Param Setting",
                                                         value="Quality")
                         with gr.Column():
-                            restart_button = gr.Button(value="Reset Param", scale=2)
+                            reset_button = gr.Button(value="Reset Param", scale=2)
                     with gr.Row():
                         with gr.Column():
                             linear_CFG = gr.Checkbox(label="Linear CFG", value=True)
@@ -756,35 +877,43 @@ with block:
             fb_text = gr.Textbox(label="Feedback Text", value="",
                                  placeholder='Please enter your feedback here.')
             submit_button = gr.Button(value="Submit Feedback")
-
-    llava_button.click(fn=llava_process, inputs=[stage_1_output_image, temperature, top_p, qs], outputs=[prompt])
-    stage_1_button.click(fn=stage1_process, inputs=[input_image, gamma_correction],
-                         outputs=[stage_1_output_image])
+    #
     stage2_ips = [input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
                   random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, make_comparison_video,
                   video_duration, video_fps, video_width, video_height]
-    stage_2_button.click(fn=stage2_process, inputs=stage2_ips,
-                         outputs=[result_gallery, event_id, fb_score, fb_text, seed, face_gallery, comparison_video],
+
+    batch_ips = [batch_process_folder, outputs_folder, prompt, a_prompt, n_prompt, num_samples, upscale,
+                 edm_steps, s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
+                 gamma_correction, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,
+                 num_images, random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,
+                 batch_process_llava, temperature, top_p, qs, make_comparison_video, video_duration, video_fps,
+                 video_width, video_height]
+
+    output_elements = [prompt, stage_1_output_image, result_gallery, result_slider, event_id, fb_score, fb_text, seed,
+                       face_gallery, comparison_video]
+
+    llava_button.click(fn=llava_process_single, inputs=[input_image, temperature, top_p, qs], outputs=output_label,
+                       show_progress=True, queue=True)
+    stage_1_button.click(fn=stage1_process_single, inputs=[input_image, gamma_correction], outputs=output_label,
                          show_progress=True, queue=True)
-    restart_button.click(fn=load_and_reset, inputs=[param_setting],
-                         outputs=[edm_steps, s_cfg, s_stage2, s_stage1, s_churn, s_noise, a_prompt, n_prompt,
-                                  color_fix_type, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2])
+    stage_2_button.click(fn=stage2_process_single, inputs=stage2_ips, outputs=output_label,
+                         show_progress=True, queue=True)
+    start_batch_button.click(fn=batch_upscale, inputs=batch_ips, outputs=output_label,
+                             show_progress=True, queue=True)
+    stop_batch_button.click(fn=stop_batch_upscale, show_progress=True, queue=True)
+    reset_button.click(fn=load_and_reset, inputs=[param_setting],
+                       outputs=[edm_steps, s_cfg, s_stage2, s_stage1, s_churn, s_noise, a_prompt, n_prompt,
+                                color_fix_type, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2])
+
+    # We just read the output_label and update all the elements when we find "Processing Complete"
+    output_label.change(fn=update_elements, show_progress=False, queue=True, inputs=[output_label],
+                        outputs=output_elements)
+
     make_comparison_video.change(fn=toggle_compare_elements, inputs=[make_comparison_video],
                                  outputs=[comparison_video_col, compare_video_row])
     submit_button.click(fn=submit_feedback, inputs=[event_id, fb_score, fb_text], outputs=[fb_text])
-    stage2_ips_batch = [batch_process_folder, outputs_folder, prompt, a_prompt, n_prompt, num_samples, upscale,
-                        edm_steps, s_stage1, s_stage2,
-                        s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
-                        linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-                        random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,
-                        batch_process_llava, temperature, top_p, qs, make_comparison_video, video_duration, video_fps,
-                        video_width, video_height]
-
-    start_batch_button.click(fn=batch_upscale, inputs=stage2_ips_batch, outputs=output_label, show_progress=True,
-                             queue=True)
-    stop_batch_button.click(fn=stop_batch_upscale, show_progress=True, queue=True)
     input_image.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
     upscale.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
 
