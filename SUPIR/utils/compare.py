@@ -9,10 +9,12 @@ def create_comparison_video(image_a, image_b, output_video, duration=5, frame_ra
         '-loop', '1',
         '-i', image_b,
         '-filter_complex',
-        f"[0]scale={video_width}:{video_height}[img1];"  # Scale image A
-        f"[1]scale={video_width}:{video_height}[img2];"  # Scale image B
-        f"[img1][img2]blend=all_expr='if(gte(X,W*T/{duration}),A,B)':shortest=1,"  # Slide comparison
-        f"format=yuv420p,scale={video_width}:{video_height}",  # Format and scale output
+        f"color=c=white:s=4x{video_height}[slider];"
+        f"[0]scale={video_width}:{video_height}[img1];"
+        f"[1]scale={video_width}:{video_height}[img2];"
+        f"[img1][img2]blend=all_expr='if(gte(X,W*T/{duration}),A,B)':shortest=1[comp];"
+        f"[comp][slider]overlay=x=W*t/{duration}:y=0,"
+        f"format=yuv420p,scale={video_width}:{video_height}",
         '-t', str(duration),  # Duration of the video
         '-r', str(frame_rate),  # Frame rate
         '-c:v', 'libx264',  # Video codec
