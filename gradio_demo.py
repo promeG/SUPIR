@@ -732,10 +732,6 @@ with block:
         with gr.Row():
             gr.Markdown("<center>Stage1 Output</center>")
             denoise_image = gr.Image(type="numpy", elem_id="image-s1", height=400, width=400)
-            denoise_button = gr.Button(value="Stage1 Run")
-            apply_stage_1 = gr.Checkbox(label="Apply Stage 1 Before Stage 2 - Works On Batch Too",
-                                        value=False)
-
     with gr.Tab("Image Metadata"):
         with gr.Row():
             metadata_image_input = gr.Image(type="filepath", label="Upload Image")
