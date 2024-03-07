@@ -606,7 +606,7 @@ with block:
             start_batch_button = gr.Button(value="Start Batch")
             stop_batch_button = gr.Button(value="Cancel Batch")
         with gr.Row():
-            output_label = gr.Label("Batch Processing Progress")
+            output_label = gr.Label(label="Progress")
         with gr.Row(equal_height=True):
             with gr.Column() as input_col:
                 input_image = gr.Image(type="filepath", elem_id="image-input", label="Input Image",
