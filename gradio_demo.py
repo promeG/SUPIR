@@ -43,7 +43,6 @@ parser.add_argument("--decoder_tile_size", type=int, default=64)
 parser.add_argument("--load_8bit_llava", action='store_true', default=False)
 parser.add_argument("--ckpt", type=str, default='models/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors')
 parser.add_argument("--theme", type=str, default='gr.themes.Default')
-#parser.add_argument("--theme", type=str, default='d8ahazard/material_design_rd')
 parser.add_argument("--outputs_folder")
 args = parser.parse_args()
 server_ip = args.ip
