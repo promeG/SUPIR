@@ -15,6 +15,8 @@ import numpy as np
 import torch
 from SUPIR.util import create_SUPIR_model, load_QF_ckpt
 from PIL import Image
+
+from SUPIR.utils.model_fetch import get_model
 from llava.llava_agent import LLavaAgent
 from CKPT_PTH import LLAVA_MODEL_PATH
 import einops
@@ -91,7 +93,9 @@ def load_model():
 def load_llava():
     global llava_agent
     if llava_agent is None and use_llava:
-        llava_agent = LLavaAgent(LLAVA_MODEL_PATH, device='cuda', load_8bit=args.load_8bit_llava,
+        llava_model = os.getenv('LLAVA_MODEL', 'liuhaotian/llava-v1.5-7b')
+        llava_path = get_model(llava_model)
+        llava_agent = LLavaAgent(llava_path, device='cuda', load_8bit=args.load_8bit_llava,
                                  load_4bit=False)
 
 
