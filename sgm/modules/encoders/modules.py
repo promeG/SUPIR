@@ -18,6 +18,7 @@ from transformers import (
     T5Tokenizer,
 )
 
+from SUPIR.utils.model_fetch import get_model
 from ...modules.autoencoding.regularizers import DiagonalGaussianRegularizer
 from ...modules.diffusionmodules.model import Encoder
 from ...modules.diffusionmodules.openaimodel import Timestep
@@ -455,8 +456,9 @@ class FrozenCLIPEmbedder(AbstractEmbModel):
     ):  # clip-vit-base-patch32
         super().__init__()
         assert layer in self.LAYERS
-        self.tokenizer = CLIPTokenizer.from_pretrained(version if SDXL_CLIP1_PATH is None else SDXL_CLIP1_PATH)
-        self.transformer = CLIPTextModel.from_pretrained(version if SDXL_CLIP1_PATH is None else SDXL_CLIP1_PATH)
+        model_file = get_model(SDXL_CLIP1_PATH)
+        self.tokenizer = CLIPTokenizer.from_pretrained(model_file)
+        self.transformer = CLIPTextModel.from_pretrained(model_file)
         self.device = device
         self.max_length = max_length
         if freeze:
@@ -523,10 +525,11 @@ class FrozenOpenCLIPEmbedder2(AbstractEmbModel):
     ):
         super().__init__()
         assert layer in self.LAYERS
+        model_path = get_model(SDXL_CLIP2_CKPT_PTH)
         model, _, _ = open_clip.create_model_and_transforms(
             arch,
             device=torch.device("cpu"),
-            pretrained=version if SDXL_CLIP2_CKPT_PTH is None else SDXL_CLIP2_CKPT_PTH,
+            pretrained=model_path,
         )
         del model.visual
         self.model = model
