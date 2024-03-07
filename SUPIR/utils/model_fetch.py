@@ -7,6 +7,6 @@ def get_model(model_repo: str):
     model_name = model_repo.split('/')[-1]
     model_path = os.path.join(models_folder, model_name)
     if not os.path.exists(model_path):
-        model_folder = llava_model.split('/')[1]
-        snapshot_download(llava_model, local_dir=os.path.join(models_folder, model_folder), local_dir_use_symlinks=False)
+        model_folder = model_repo.split('/')[1]
+        snapshot_download(model_repo, local_dir=os.path.join(models_folder, model_folder), local_dir_use_symlinks=False)
     return model_path
