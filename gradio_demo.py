@@ -93,8 +93,7 @@ def load_model():
 def load_llava():
     global llava_agent
     if llava_agent is None and use_llava:
-        llava_model = os.getenv('LLAVA_MODEL', 'liuhaotian/llava-v1.5-7b')
-        llava_path = get_model(llava_model)
+        llava_path = get_model('liuhaotian/llava-v1.5-7b')
         llava_agent = LLavaAgent(llava_path, device='cuda', load_8bit=args.load_8bit_llava,
                                  load_4bit=False)
 
