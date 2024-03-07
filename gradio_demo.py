@@ -15,6 +15,8 @@ import numpy as np
 import torch
 from SUPIR.util import create_SUPIR_model, load_QF_ckpt
 from PIL import Image
+
+from SUPIR.utils.model_fetch import get_model
 from llava.llava_agent import LLavaAgent
 from CKPT_PTH import LLAVA_MODEL_PATH
 import einops
@@ -91,7 +93,8 @@ def load_model():
 def load_llava():
     global llava_agent
     if llava_agent is None and use_llava:
-        llava_agent = LLavaAgent(LLAVA_MODEL_PATH, device='cuda', load_8bit=args.load_8bit_llava,
+        llava_path = get_model('liuhaotian/llava-v1.5-7b')
+        llava_agent = LLavaAgent(llava_path, device='cuda', load_8bit=args.load_8bit_llava,
                                  load_4bit=False)
 
 
@@ -728,10 +731,6 @@ with block:
         with gr.Row():
             gr.Markdown("<center>Stage1 Output</center>")
             denoise_image = gr.Image(type="numpy", elem_id="image-s1", height=400, width=400)
-            denoise_button = gr.Button(value="Stage1 Run")
-            apply_stage_1 = gr.Checkbox(label="Apply Stage 1 Before Stage 2 - Works On Batch Too",
-                                        value=False)
-
     with gr.Tab("Image Metadata"):
         with gr.Row():
             metadata_image_input = gr.Image(type="filepath", label="Upload Image")

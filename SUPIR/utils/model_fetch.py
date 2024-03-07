@@ -3,6 +3,7 @@ import os
 
 models_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", 'models'))
 
+
 def get_model(model_repo: str):
     model_name = model_repo.split('/')[-1]
     model_path = os.path.join(models_folder, model_name)
