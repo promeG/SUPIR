@@ -1,3 +1,4 @@
+import gc
 import traceback
 from logging import PlaceHolder
 import os
@@ -6,6 +7,9 @@ from pickle import TRUE
 import gradio as gr
 from gradio_imageslider import ImageSlider
 import argparse
+
+from omegaconf import OmegaConf
+
 from SUPIR.util import HWC3, upscale_image, fix_resize, convert_dtype, Tensor2PIL
 import numpy as np
 import torch
@@ -28,8 +32,8 @@ from SUPIR.utils.compare import create_comparison_video
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1')
 parser.add_argument("--share", type=str, default=False)
-parser.add_argument("--port")
-parser.add_argument("--no_llava", action='store_true', default=True)
+parser.add_argument("--port", type=int, default=7860)
+parser.add_argument("--no_llava", action='store_true', default=False)
 parser.add_argument("--use_image_slider", action='store_true', default=False)
 parser.add_argument("--log_history", action='store_true', default=False)
 parser.add_argument("--loading_half_params", action='store_true', default=False)
@@ -57,22 +61,7 @@ else:
 face_helper = None
 model = None
 llava_agent = None
-ckpt_Q = None
-ckpt_F = None
 models_loaded = False
-
-
-def load_models():
-    global face_helper, model, llava_agent, ckpt_Q, ckpt_F, models_loaded
-
-    if models_loaded:
-        return
-
-    load_face_helper()
-    load_model()
-    load_llava()
-    load_qf()
-    models_loaded = True
 
 
 def load_face_helper():
@@ -103,14 +92,8 @@ def load_model():
 def load_llava():
     global llava_agent
     if llava_agent is None and use_llava:
-        llava_agent = LLavaAgent(LLAVA_MODEL_PATH, device='cpu', load_8bit=args.load_8bit_llava,
+        llava_agent = LLavaAgent(LLAVA_MODEL_PATH, device='cuda', load_8bit=args.load_8bit_llava,
                                  load_4bit=False)
-
-
-def load_qf():
-    global ckpt_Q, ckpt_F
-    if ckpt_Q is None or ckpt_F is None:
-        ckpt_Q, ckpt_F = load_QF_ckpt('options/SUPIR_v0.yaml')
 
 
 def all_to_cpu():
@@ -153,7 +136,7 @@ def stage1_process(input_image, gamma_correction) -> np.ndarray:
     return lq
 
 
-def llava_process(input_image, temperature, top_p, qs=None):
+def llava_process(input_image, temperature, top_p, qs=None, unload=True):
     global llava_agent
     load_llava()
     llava_agent = to_gpu(llava_agent, LLaVA_device)
@@ -163,7 +146,8 @@ def llava_process(input_image, temperature, top_p, qs=None):
         captions = llava_agent.gen_image_caption([LQ], temperature=temperature, top_p=top_p, qs=qs)
     else:
         captions = ['LLaVA is not available. Please add text manually.']
-    all_to_cpu()
+    if unload:
+        all_to_cpu()
     return captions[0]
 
 def update_target_resolution(input_image, upscale):
@@ -235,25 +219,44 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
                   s_stage1, s_stage2,
                   s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                   linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-                  random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,make_comparison_video,video_duration, video_fps,video_width,video_height,
+                  random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, batch_process_llava, temperature, top_p, qs, make_comparison_video, video_duration, video_fps, video_width, video_height,
                   progress=gr.Progress()):
-    global batch_processing_val
+    global batch_processing_val, llava_agent
     batch_processing_val = True
     # Get the list of image files in the folder
     image_files = [file for file in os.listdir(batch_process_folder) if
                    file.lower().endswith((".png", ".jpg", ".jpeg"))]
     total_images = len(image_files)
     main_prompt = prompt
-    # Iterate over all image files in the folder
+    captions = []
+    if batch_process_llava:
+        print('Processing LLaVA')
+        for index, file_name in enumerate(image_files):
+            if not batch_processing_val:  # Check if batch processing has been stopped
+                break
+            progress((index + 1) / total_images, f"Processing {index + 1}/{total_images} image with LLaVA")
+            # Construct the full file path
+            file_path = os.path.join(batch_process_folder, file_name)
+            with Image.open(file_path) as img:
+                image_array = np.asarray(img)
+                caption = llava_process(image_array, temperature, top_p, qs, False)
+                captions.append(caption)
+        # Iterate over all image files in the folder
+        if llava_agent:
+            del llava_agent
+            llava_agent = None
+            torch.cuda.empty_cache()
+            gc.collect()
     stage_2_files = []
+
+    print("Processing images (Stage 1)")
     for index, file_name in enumerate(image_files):
         try:
             if not batch_processing_val:  # Check if batch processing has been stopped
                 break
-            progress((index + 1) / total_images, f"Processing {index + 1}/{total_images} image")
+            progress((index + 1) / total_images, f"Processing {index + 1}/{total_images} image (Stage 1)")
             # Construct the full file path
             file_path = os.path.join(batch_process_folder, file_name)
-
             if apply_stage_1:
                 image_array = stage1_process(file_path, gamma_correction)
             else:
@@ -265,11 +268,13 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
             print(f"Error processing {file_name}: {e} at {traceback.format_exc()}")
             continue
     all_to_cpu()
+
+    print("Processing images (Stage 2)")
     for index, (file_path, image_array) in enumerate(stage_2_files):
         try:
             if not batch_processing_val:  # Check if batch processing has been stopped
                 break
-            progress((index + 1) / total_images, f"Processing {index + 1}/{total_images} image")
+            progress((index + 1) / total_images, f"Processing {index + 1}/{total_images} image (Stage 2)")
             # Construct the full file path
             prompt = main_prompt
             # Open the image file and convert it to a NumPy array
@@ -278,8 +283,9 @@ def batch_upscale(batch_process_folder, outputs_folder, prompt, a_prompt, n_prom
             base_name = os.path.splitext(os.path.basename(file_path))[0]
             prompt_file_path = os.path.join(batch_process_folder, f"{base_name}.txt")
 
-            # Read the prompt from the text file
-            if os.path.exists(prompt_file_path):
+            if len(captions):
+                prompt = captions[index]
+            elif os.path.exists(prompt_file_path):
                 with open(prompt_file_path, "r", encoding="utf-8") as f:
                     prompt = f.read().strip()
 
@@ -311,7 +317,6 @@ def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale,
             image_array = np.asarray(img)
     input_image = image_array
     load_model()
-    load_qf()
     to_gpu(model, SUPIR_device)
     if model is None:
         raise ValueError('Model not loaded')
@@ -326,12 +331,16 @@ def stage2_process(image_path, prompt, a_prompt, n_prompt, num_samples, upscale,
                   'apply_bg': apply_bg, 'face_prompt': face_prompt}
 
     if model_select != model.current_model:
+        config = OmegaConf.load('options/SUPIR_v0_tiled.yaml')
+        device = 'cpu'
         if model_select == 'v0-Q':
             print('load v0-Q')
+            ckpt_Q = torch.load(config.SUPIR_CKPT_Q, map_location=device)
             model.load_state_dict(ckpt_Q, strict=False)
             model.current_model = 'v0-Q'
         elif model_select == 'v0-F':
             print('load v0-F')
+            ckpt_F = torch.load(config.SUPIR_CKPT_F, map_location=device)
             model.load_state_dict(ckpt_F, strict=False)
             model.current_model = 'v0-F'
     input_image = HWC3(input_image)
@@ -653,7 +662,11 @@ with block:
                         video_height = gr.Textbox(label="Height", value="1080")
                 with gr.Row():
                     with gr.Column():
-                        diffusion_button = gr.Button(value="Upscale Image")
+                        denoise_button = gr.Button(value="Stage1 Run")
+                        diffusion_button = gr.Button(value="Stage2 Run")
+                    with gr.Column():
+                        apply_stage_1 = gr.Checkbox(label="Apply Stage 1 Before Stage 2", value=False)
+                        batch_process_llava = gr.Checkbox(label="Batch Process LLaVA", value=False)
                 with gr.Row():
                     with gr.Column():
                         batch_process_folder = gr.Textbox(
@@ -697,7 +710,7 @@ with block:
                         model_select = gr.Radio(["v0-Q", "v0-F"], label="Model Selection", value="v0-Q",
                                                 interactive=True)
                     with gr.Column():
-                        llave_button = gr.Button(value="LlaVa Run")
+                        llava_button = gr.Button(value="LlaVa Run")
                 with gr.Accordion("LLaVA options", open=False):
                     temperature = gr.Slider(label="Temperature", minimum=0., maximum=1.0, value=0.2, step=0.1)
                     top_p = gr.Slider(label="Top P", minimum=0., maximum=1.0, value=0.7, step=0.1)
@@ -729,7 +742,7 @@ with block:
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
 
-    llave_button.click(fn=llava_process, inputs=[denoise_image, temperature, top_p, qs], outputs=[prompt])
+    llava_button.click(fn=llava_process, inputs=[denoise_image, temperature, top_p, qs], outputs=[prompt])
     denoise_button.click(fn=stage1_process, inputs=[input_image, gamma_correction],
                          outputs=[denoise_image])
     stage2_ips = [input_image, prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
@@ -747,7 +760,7 @@ with block:
                         edm_steps, s_stage1, s_stage2,
                         s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction,
                         linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, num_images,
-                        random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, make_comparison_video,video_duration, video_fps,video_width,video_height]
+                        random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, batch_process_llava, temperature, top_p, qs, make_comparison_video,video_duration, video_fps,video_width,video_height]
 
     batch_upscale_button.click(fn=batch_upscale, inputs=stage2_ips_batch, outputs=outputlabel, show_progress=True,
                                queue=True)
