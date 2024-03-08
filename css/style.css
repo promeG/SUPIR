@@ -34,11 +34,19 @@
     max-height: 100%;
     justify-content: center;
     align-items: center;
+    display:flex;
 }
 
 .preview_slider img {
-    width: unset;
     height: var(--size-full);
     object-fit: cover;
-    margin: 0 25%;
+}
+
+.preview_slider .wrapper {
+    position: relative;
+    /* width: 100%; */
+    height: 100%;
+    justify-content: center;
+    align-items: center;
+    display: flex;
 }

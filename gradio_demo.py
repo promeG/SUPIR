@@ -598,9 +598,15 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
             with open(f'./history/{event_id[:5]}/{event_id[5:]}/logs.txt', 'w') as f:
                 f.write(str(event_dict))
             f.close()
-            Image.fromarray(img).save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
+            if isinstance(img, np.ndarray):
+                Image.fromarray(img).save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
+            else:
+                img.save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
             for i, result in enumerate(all_results):
-                Image.fromarray(result).save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
+                if isinstance(img, np.ndarray):
+                    Image.fromarray(result).save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
+                else:
+                    img.save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
         if not batch_processing_val:  # Check if batch processing has been stopped
             break
 
