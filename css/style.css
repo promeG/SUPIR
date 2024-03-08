@@ -50,3 +50,48 @@
     align-items: center;
     display: flex;
 }
+
+.full_slider {
+    width: 100%;
+    height: 100% !important;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 50;
+    overflow: hidden;
+}
+
+.slider_button.full {
+    position: fixed !important;
+    z-index: 100;
+}
+
+.slider_button {
+    position: absolute;
+    width: 25px;
+    height: 25px;
+    border-radius: 50%;
+    color: white;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    z-index: 1;
+}
+
+#fullscreen_button {
+    top: 10px; /* Adjust as needed for spacing from the top */
+    right: 10px; /* Distance of the first button from the right, including space for the second button and some padding */
+    transform: none; /* Removed to position at the top correctly */
+}
+
+#download_button {
+    top: 10px; /* Adjust as needed for spacing from the top */
+    right: 40px; /* Adjust as needed for spacing from the right edge */
+    transform: none; /* Removed to position at the top correctly */
+}
+
+

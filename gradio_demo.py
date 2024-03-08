@@ -3,6 +3,7 @@ import copy
 import datetime
 import gc
 import os
+import tempfile
 import time
 import traceback
 from datetime import datetime
@@ -11,6 +12,7 @@ from typing import Tuple, List, Any, Dict
 import einops
 import gradio as gr
 import numpy as np
+import requests
 import torch
 from PIL import Image
 from PIL import PngImagePlugin
@@ -260,6 +262,24 @@ def update_elements(status_label):
 
 
 batch_processing_val = False
+
+
+def populate_slider_single():
+    # Fetch the image at http://www.marketingtool.online/en/face-generator/img/faces/avatar-1151ce9f4b2043de0d2e3b7826127998.jpg
+    # and use it as the input image
+    temp_path = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+    temp_path.write(requests.get(
+        "http://www.marketingtool.online/en/face-generator/img/faces/avatar-1151ce9f4b2043de0d2e3b7826127998.jpg").content)
+    temp_path.close()
+    lowres_path = temp_path.name.replace('.jpg', '_lowres.jpg')
+    with Image.open(temp_path.name) as img:
+        current_dims = (img.size[0] // 2, img.size[1] // 2)
+        resized_dims = (img.size[0] // 4, img.size[1] // 4)
+        img = img.resize(current_dims)
+        img.save(temp_path.name)
+        img = img.resize(resized_dims)
+        img.save(lowres_path)
+    return gr.update(value=[lowres_path, temp_path.name], visible=True)
 
 
 def llava_process_single(image, temp, p, question=None, unload=True, progress=gr.Progress()):
@@ -717,6 +737,19 @@ def submit_feedback(evt_id, f_score, f_text):
         return 'Submit failed, the server is not set to log history.'
 
 
+slider_full = False
+
+
+def toggle_full_slider():
+    global slider_full
+    if slider_full:
+        slider_full = False
+        return gr.update(elem_classes=["preview_box", "preview_slider"], visible=True), gr.update(elem_classes=["slider_button"], visible=True)
+    else:
+        slider_full = True
+        return gr.update(elem_classes=["preview_box", "preview_slider", "full_slider"], visible=True), gr.update(elem_classes=["slider_button", "full"], visible=True)
+
+
 def toggle_compare_elements(enable: bool) -> Tuple[gr.update, gr.update]:
     return gr.update(visible=enable), gr.update(visible=enable), gr.update(visible=enable)
 
@@ -763,15 +796,25 @@ with block:
                 input_image = gr.Image(type="filepath", elem_id="image-input", label="Input Image",
                                        elem_classes=["preview_box"], height=400, sources=["upload"])
             with gr.Column(visible=False, elem_classes=['preview_col']) as comparison_video_col:
-                comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"], height=400, visible=False)
+                comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"], height=400,
+                                            visible=False)
             with gr.Column(elem_classes=['preview_col']) as result_col:
                 result_gallery = gr.Gallery(label='Output', elem_id="gallery2", elem_classes=["preview_box"],
                                             height=400, visible=False, columns=4)
                 result_slider = ImageSlider(label='Output', interactive=False, show_download_button=True,
-                                            elem_id="gallery1", elem_classes=["preview_box", "preview_slider"], height=400, container=True)
+                                            elem_id="gallery1", elem_classes=["preview_box", "preview_slider"],
+                                            height=400, container=True)
+                dl_symbol = "\U00002B73"  # ⭳
+                fullscreen_symbol = "\U000026F6"  # ⛶
+                # slider_dl_button = gr.Button(value=dl_symbol, elem_classes=["slider_button"], visible=True,
+                #                              elem_id="download_button")
+                slider_full_button = gr.Button(value=fullscreen_symbol, elem_classes=["slider_button"], visible=True,
+                                               elem_id="fullscreen_button")
         with gr.Row():
             with gr.Column():
                 with gr.Accordion("General options", open=True):
+                    if args.debug:
+                        populate_slider = gr.Button(value="Populate Slider")
                     upscale = gr.Slider(label="Upscale Size (Stage 2)", minimum=1, maximum=8, value=1, step=0.1)
                     prompt = gr.Textbox(label="Prompt", value="")
                     face_prompt = gr.Textbox(label="Face Prompt",
@@ -943,6 +986,12 @@ with block:
     submit_button.click(fn=submit_feedback, inputs=[event_id, fb_score, fb_text], outputs=[fb_text])
     input_image.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
     upscale.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
+    populate_slider.click(fn=populate_slider_single, outputs=[result_slider],
+                          show_progress=True, queue=True)
+
+    #slider_dl_button.click(fn=download_slider_image, inputs=[result_slider], show_progress=False, queue=True)
+    slider_full_button.click(fn=toggle_full_slider, outputs=[result_slider, slider_full_button],
+                             show_progress=False, queue=True)
 
 if args.port is not None:  # Check if the --port argument is provided
     block.launch(server_name=server_ip, server_port=args.port, share=args.share, inbrowser=args.open_browser)
