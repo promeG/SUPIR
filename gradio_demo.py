@@ -762,7 +762,7 @@ with block:
                 result_gallery = gr.Gallery(label='Output', elem_id="gallery1", elem_classes=["preview_box"],
                                             height=300, visible=False)
                 result_slider = ImageSlider(label='Output', interactive=False, show_download_button=True,
-                                            elem_id="gallery1", elem_classes=["preview_box"], height=400, container=True)
+                                            elem_id="gallery1", elem_classes=["preview_box", "preview_slider"], height=400, container=True)
         with gr.Row():
             with gr.Column():
                 with gr.Accordion("General options", open=True):
