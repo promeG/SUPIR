@@ -197,15 +197,14 @@ def read_image_metadata(image_path):
 def update_elements(status_label):
     print(f"Label changed: {status_label}")
     prompt_el = gr.update()
-    stage_1_output_image_el = gr.update()
-    result_gallery_el = gr.update()
-    result_slider_el = gr.update()
+    result_gallery_el = gr.update(height=300)
+    result_slider_el = gr.update(height=300)
+    comparison_video_el = gr.update(height=300)
     event_id_el = gr.update()
     fb_score_el = gr.update()
     fb_text_el = gr.update()
     seed_el = gr.update()
     face_gallery_el = gr.update()
-    comparison_video_el = gr.update()
 
     if "Processing Complete" in status_label:
         print(status_label)
@@ -213,15 +212,22 @@ def update_elements(status_label):
             status_container.llava_caption = status_container.llava_captions[0]
             prompt_el = gr.update(value=status_container.llava_caption)
             print(f"LLaVA caption: {status_container.llava_caption}")
+            # Hide gallery, show empty slider
             result_gallery_el = gr.update(visible=False)
+            result_slider_el = gr.update(visible=True, value=None)
         elif "Stage 1" in status_label:
             print("Updating stage 1 output image")
             # Get the first value from status_container.image_data dict
+            src_image_path = list(status_container.image_data.keys())[0]
+            with Image.open(src_image_path) as img:
+                src_image = np.array(img)
             out_image = list(status_container.image_data.values())[0]
-            stage_1_output_image_el = gr.update(value=out_image)
+            # Show slider for stage1
+            result_slider_el = gr.update(value=[src_image, out_image], visible=True)
             result_gallery_el = gr.update(visible=False)
         elif "Stage 2" in status_label:
             print("Updating stage 2 output image")
+            # Update the slider with the outputs, hide the gallery
             result_slider_el = gr.update(value=status_container.result_gallery, visible=True)
             result_gallery_el = gr.update(visible=False)
             event_id_el = gr.update(value=status_container.event_id)
@@ -232,7 +238,16 @@ def update_elements(status_label):
             comparison_video_el = gr.update(value=status_container.comparison_video)
         elif "Batch" in status_label:
             print("Updating batch outputs")
-            result_gallery_el = gr.update(value=status_container.result_gallery, visible=True)
+            image_data = status_container.image_data
+            image_values = list(image_data.values())
+            if len(status_container.llava_captions) == len(image_values):
+                gallery_elements = []
+                for i, (img_path, img) in enumerate(image_data.items()):
+                    gallery_elements.append((img, status_container.llava_captions[i]))
+            else:
+                gallery_elements = image_values
+            # Show batch gallery, hide slider
+            result_gallery_el = gr.update(value=gallery_elements, visible=True)
             result_slider_el = gr.update(visible=False)
             event_id_el = gr.update(value=status_container.event_id)
             fb_score_el = gr.update(value=status_container.fb_score)
@@ -240,7 +255,7 @@ def update_elements(status_label):
             seed_el = gr.update(value=status_container.seed)
             face_gallery_el = gr.update(value=status_container.face_gallery)
             comparison_video_el = gr.update(value=status_container.comparison_video)
-    return (prompt_el, stage_1_output_image_el, result_gallery_el, result_slider_el, event_id_el, fb_score_el,
+    return (prompt_el, result_gallery_el, result_slider_el, event_id_el, fb_score_el,
             fb_text_el, seed_el, face_gallery_el, comparison_video_el)
 
 
@@ -697,7 +712,7 @@ def submit_feedback(evt_id, f_score, f_text):
 
 
 def toggle_compare_elements(enable: bool) -> Tuple[gr.update, gr.update]:
-    return gr.update(visible=enable), gr.update(visible=enable)
+    return gr.update(visible=enable), gr.update(visible=enable), gr.update(visible=enable)
 
 
 title_md = """
@@ -738,19 +753,16 @@ with block:
         with gr.Row():
             output_label = gr.Label(label="Progress", elem_classes=["progress_label"])
         with gr.Row(equal_height=True):
-            with gr.Column() as input_col:
+            with gr.Column(elem_classes=['preview_col']) as input_col:
                 input_image = gr.Image(type="filepath", elem_id="image-input", label="Input Image",
-                                       elem_classes=["preview_box"], height=300, sources=["upload"])
-            with gr.Column(visible=False) as stage_1_out_col:
-                stage_1_output_image = gr.Image(type="numpy", elem_id="image-s1", label="Stage1 Output",
-                                                elem_classes=["preview_box"], height=300, interactive=False)
-            with gr.Column(visible=False) as comparison_video_col:
-                comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"], height=300)
-            with gr.Column() as result_col:
+                                       elem_classes=["preview_box"], height=400, sources=["upload"])
+            with gr.Column(visible=False, elem_classes=['preview_col']) as comparison_video_col:
+                comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"], height=400, visible=False)
+            with gr.Column(elem_classes=['preview_col']) as result_col:
                 result_gallery = gr.Gallery(label='Output', elem_id="gallery1", elem_classes=["preview_box"],
                                             height=300, visible=False)
                 result_slider = ImageSlider(label='Output', interactive=False, show_download_button=True,
-                                            elem_id="gallery1", elem_classes=["preview_box"], height=300)
+                                            elem_id="gallery1", elem_classes=["preview_box"], height=400, container=True)
         with gr.Row():
             with gr.Column():
                 with gr.Accordion("General options", open=True):
@@ -900,7 +912,7 @@ with block:
                  batch_process_llava, temperature, top_p, qs, make_comparison_video, video_duration, video_fps,
                  video_width, video_height]
 
-    output_elements = [prompt, stage_1_output_image, result_gallery, result_slider, event_id, fb_score, fb_text, seed,
+    output_elements = [prompt, result_gallery, result_slider, event_id, fb_score, fb_text, seed,
                        face_gallery, comparison_video]
 
     llava_button.click(fn=llava_process_single, inputs=[input_image, temperature, top_p, qs], outputs=output_label,
@@ -921,7 +933,7 @@ with block:
                         outputs=output_elements)
 
     make_comparison_video.change(fn=toggle_compare_elements, inputs=[make_comparison_video],
-                                 outputs=[comparison_video_col, compare_video_row])
+                                 outputs=[comparison_video_col, compare_video_row, comparison_video])
     submit_button.click(fn=submit_feedback, inputs=[event_id, fb_score, fb_text], outputs=[fb_text])
     input_image.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
     upscale.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
