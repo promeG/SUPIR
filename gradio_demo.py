@@ -820,6 +820,8 @@ with block:
                 with gr.Accordion("General options", open=True):
                     if args.debug:
                         populate_slider = gr.Button(value="Populate Slider")
+                        populate_slider.click(fn=populate_slider_single, outputs=[result_slider],
+                                              show_progress=True, queue=True)
                     upscale = gr.Slider(label="Upscale Size (Stage 2)", minimum=1, maximum=8, value=1, step=0.1)
                     prompt = gr.Textbox(label="Prompt", value="")
                     face_prompt = gr.Textbox(label="Face Prompt",
@@ -991,8 +993,7 @@ with block:
     submit_button.click(fn=submit_feedback, inputs=[event_id, fb_score, fb_text], outputs=[fb_text])
     input_image.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
     upscale.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
-    populate_slider.click(fn=populate_slider_single, outputs=[result_slider],
-                          show_progress=True, queue=True)
+
 
     #slider_dl_button.click(fn=download_slider_image, inputs=[result_slider], show_progress=False, queue=True)
     slider_full_button.click(fn=toggle_full_slider, outputs=[result_slider, slider_full_button],
