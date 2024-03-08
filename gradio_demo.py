@@ -41,12 +41,12 @@ parser.add_argument("--ckpt", type=str, default='models/Juggernaut-XL_v9_RunDiff
 parser.add_argument("--theme", type=str, default='default')
 parser.add_argument("--open_browser", action='store_true', default=True)
 parser.add_argument("--outputs_folder")
-parser.add_argument("--debug")
+parser.add_argument("--debug", action='store_true', default=False)
 args = parser.parse_args()
 server_ip = args.ip
 use_llava = not args.no_llava
-if(args.debug):
-    args.open_browser=False
+if args.debug:
+    args.open_browser = False
 
 if torch.cuda.device_count() >= 2:
     SUPIR_device = 'cuda:0'
@@ -568,7 +568,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
 
                 all_results.extend(results)
         if len(inputs.keys()) == 1:
-            # Prepend the first input image to all_results
+            # Prepend the first input image to all_results for slider
             all_results.insert(0, list(inputs.values())[0])
         output_data[image_path] = all_results
         status_container.prompt = img_prompt
@@ -589,7 +589,6 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
         if not batch_processing_val:  # Check if batch processing has been stopped
             break
 
-    status_container.result_gallery = output_data
     if not batch_processing_val or unload:
         all_to_cpu()
 
@@ -602,7 +601,6 @@ def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n
                   num_images, random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,
                   batch_process_llava, temperature, top_p, qs, make_comparison_video, video_duration, video_fps,
                   video_width, video_height, progress=gr.Progress()):
-    
     global batch_processing_val, llava_agent
     batch_processing_val = True
     # Get the list of image files in the folder
@@ -630,14 +628,14 @@ def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n
 
     if not batch_processing_val:
         return f"Batch Processing Complete: Cancelled at {time.ctime()}."
-    
+
     if apply_stage_1:
         print("Processing images (Stage 1)")
         stage1_process(img_data, gamma_correction, unload=True, progress=progress)
-    
+
     if not batch_processing_val:
         return f"Batch Processing Complete: Cancelled at {time.ctime()}."
-    
+
     print("Processing images (Stage 2)")
     stage2_process(img_data, captions, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2, s_cfg,
                    seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction, linear_CFG,
@@ -645,7 +643,7 @@ def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n
                    apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, make_comparison_video,
                    video_duration, video_fps, video_width, video_height, dont_update_progress=True,
                    out_folder=outputs_folder, batch_process_folder=batch_process_folder, unload=True, progress=progress)
-    
+
     batch_processing_val = False
     return f"Batch Processing Complete: processed {num_images} images at {time.ctime()}."
 
@@ -664,11 +662,11 @@ def load_and_reset(param_setting):
     schurn = 5
     snoise = 1.003
     ap = 'Cinematic, High Contrast, highly detailed, taken using a Canon EOS R camera, hyper detailed photo - ' \
-               'realistic maximum detail, 32k, Color Grading, ultra HD, extreme meticulous detailing, skin pore ' \
-               'detailing, hyper sharpness, perfect without deformations.'
+         'realistic maximum detail, 32k, Color Grading, ultra HD, extreme meticulous detailing, skin pore ' \
+         'detailing, hyper sharpness, perfect without deformations.'
     np = 'painting, oil painting, illustration, drawing, art, sketch, oil painting, cartoon, CG Style, ' \
-               '3D render, unreal engine, blurring, dirty, messy, worst quality, low quality, frames, watermark, ' \
-               'signature, jpeg artifacts, deformed, lowres, over-smooth'
+         '3D render, unreal engine, blurring, dirty, messy, worst quality, low quality, frames, watermark, ' \
+         'signature, jpeg artifacts, deformed, lowres, over-smooth'
     cfix_type = 'Wavelet'
     l_s_stage2 = 0.0
     l_s_s_stage2 = False
@@ -749,9 +747,10 @@ with block:
             with gr.Column(visible=False) as comparison_video_col:
                 comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"], height=300)
             with gr.Column() as result_col:
-                result_gallery = gr.Gallery(label='Output', elem_id="gallery1", elem_classes=["preview_box"], height=300, visible=False)
+                result_gallery = gr.Gallery(label='Output', elem_id="gallery1", elem_classes=["preview_box"],
+                                            height=300, visible=False)
                 result_slider = ImageSlider(label='Output', interactive=False, show_download_button=True,
-                                                 elem_id="gallery1", elem_classes=["preview_box"], height=300)
+                                            elem_id="gallery1", elem_classes=["preview_box"], height=300)
         with gr.Row():
             with gr.Column():
                 with gr.Accordion("General options", open=True):
