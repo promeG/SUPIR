@@ -28,22 +28,25 @@ from llava.llava_agent import LLavaAgent
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1')
 parser.add_argument("--share", type=str, default=False)
-parser.add_argument("--port", type=int, default=7860)
+parser.add_argument("--port", type=int)
 parser.add_argument("--no_llava", action='store_true', default=False)
 parser.add_argument("--use_image_slider", action='store_true', default=False)
 parser.add_argument("--log_history", action='store_true', default=False)
-parser.add_argument("--loading_half_params", action='store_true', default=False)
-parser.add_argument("--use_tile_vae", action='store_true', default=False)
+parser.add_argument("--loading_half_params", action='store_true', default=True)
+parser.add_argument("--use_tile_vae", action='store_true', default=True)
 parser.add_argument("--encoder_tile_size", type=int, default=512)
 parser.add_argument("--decoder_tile_size", type=int, default=64)
 parser.add_argument("--load_8bit_llava", action='store_true', default=False)
 parser.add_argument("--ckpt", type=str, default='models/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors')
-parser.add_argument("--theme", type=str, default='gr.themes.Default')
-parser.add_argument("--open_browser", action='store_true', default=False)
+parser.add_argument("--theme", type=str, default='default')
+parser.add_argument("--open_browser", action='store_true', default=True)
 parser.add_argument("--outputs_folder")
+parser.add_argument("--debug")
 args = parser.parse_args()
 server_ip = args.ip
 use_llava = not args.no_llava
+if(args.debug):
+    args.open_browser=False
 
 if torch.cuda.device_count() >= 2:
     SUPIR_device = 'cuda:0'
@@ -140,6 +143,7 @@ def update_target_resolution(img, do_upscale):
         return ""
     with Image.open(img) as img:
         width, height = img.size
+        width_org, height_org = img.size
 
     # Apply the do_upscale ratio
     width *= do_upscale
@@ -152,7 +156,7 @@ def update_target_resolution(img, do_upscale):
         height *= do_upscale_factor
 
     # Update the target resolution label
-    return f"Estimated Output Resolution: {int(width)}x{int(height)} px, {width * height / 1e6:.2f} Megapixels"
+    return f"Input: {int(width_org)}x{int(height_org)} px, {width_org * height_org / 1e6:.2f} Megapixels / Estimated Output Resolution: {int(width)}x{int(height)} px, {width * height / 1e6:.2f} Megapixels"
 
 
 def read_image_metadata(image_path):
@@ -212,7 +216,8 @@ def update_elements(status_label):
             result_gallery_el = gr.update(visible=False)
         elif "Stage 1" in status_label:
             print("Updating stage 1 output image")
-            out_image = status_container.image_data.values()[0]
+            # Get the first value from status_container.image_data dict
+            out_image = list(status_container.image_data.values())[0]
             stage_1_output_image_el = gr.update(value=out_image)
             result_gallery_el = gr.update(visible=False)
         elif "Stage 2" in status_label:
@@ -345,7 +350,7 @@ def stage2_process_single(image, p, ap, n_p, ns, us, edms, sstage1, sstage2, scf
     with Image.open(image) as img:
         image_data = np.array(img)
         input_data = {image: image_data}
-    captions = [ap]
+    captions = [p]
     return stage2_process(input_data, captions, ap, n_p, ns, us, edms, sstage1, sstage2, scfg, sseed, schurn, snoise,
                           cfix_type,
                           ddtype, aedtype, g_correction, l_cfg, ls_stage2, slinear_cfg, slinear_stage2, modelselect,
@@ -370,8 +375,8 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
 
     if len(out_folder) < 1:
         out_folder = "outputs"
-    if args.out_folder:
-        out_folder = args.out_folder
+    if args.outputs_folder:
+        out_folder = args.outputs_folder
     if len(batch_process_folder) > 1:
         out_folder = batch_process_folder
     output_dir = os.path.join(out_folder)
@@ -390,7 +395,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
 
     output_data = {}
 
-    for image_path, img in inputs:
+    for image_path, img in inputs.items():
         output_data[image_path] = []
         all_results = []
         img_prompt = captions[idx]
@@ -410,6 +415,8 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
         img = HWC3(img)
         img = upscale_image(img, upscale, unit_resolution=32, min_size=1024)
         lq = np.array(img)
+        lq = lq / 255 * 2 - 1
+        lq = torch.tensor(lq, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
 
         counter = 1
         _faces = []
@@ -418,6 +425,9 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
         video_path = None
 
         # Only load face model if face restoration is enabled
+        bg_caption = img_prompt
+        face_captions = img_prompt
+
         if apply_face:
             load_face_helper()
             if face_helper is None or not isinstance(face_helper, FaceRestoreHelper):
@@ -431,8 +441,6 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
             lq = lq / 255 * 2 - 1
             lq = torch.tensor(lq, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
 
-            bg_caption = img_prompt
-            face_captions = img_prompt
             if len(face_prompt) > 1:
                 face_captions = face_prompt
             to_gpu(face_helper, SUPIR_device)
@@ -484,7 +492,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                     # img_before_face_apply.save("applied_face_1.png", "PNG")
 
                 if apply_bg:
-                    caption = [bg_caption]
+                    caption = [img_prompt]
                     samples = model.batchify_sample(lq, caption, num_steps=edm_steps, restoration_scale=s_stage1,
                                                     s_churn=s_churn,
                                                     s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
@@ -506,7 +514,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                 # img_before_face_apply = Image.fromarray(_faces[0])
                 # img_before_face_apply.save("applied_face.png", "PNG")
             else:
-                caption = [bg_caption]
+                caption = [img_prompt]
                 samples = model.batchify_sample(lq, caption, num_steps=edm_steps, restoration_scale=s_stage1,
                                                 s_churn=s_churn,
                                                 s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
@@ -559,7 +567,9 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                                             video_width, video_height)
 
                 all_results.extend(results)
-
+        if len(inputs.keys) == 1:
+            # Prepend the first input image to all_results
+            all_results.insert(0, list(inputs.values())[0])
         output_data[image_path] = all_results
         status_container.prompt = img_prompt
         status_container.result_gallery = all_results
@@ -750,7 +760,7 @@ with block:
                     face_prompt = gr.Textbox(label="Face Prompt",
                                              placeholder="Optional, uses main prompt if not provided",
                                              value="")
-                    target_res = gr.Textbox(label="Output Resolution", value="", interactive=False)
+                    target_res = gr.Textbox(label="Input / Output Resolution", value="", interactive=False)
 
                 with gr.Accordion("Stage1 options", open=False):
                     gamma_correction = gr.Slider(label="Gamma Correction", minimum=0.1, maximum=2.0, value=1.0,
