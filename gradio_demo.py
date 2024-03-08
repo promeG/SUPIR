@@ -463,7 +463,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
         if not dont_update_progress and progress is not None:
             progress(0 / num_images, desc="Generating images")
         video_path = None
-        bg_caption = img_prompt
+        
         # Only load face model if face restoration is enabled
         bg_caption = img_prompt
         face_captions = img_prompt
