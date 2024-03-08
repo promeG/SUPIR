@@ -759,8 +759,8 @@ with block:
             with gr.Column(visible=False, elem_classes=['preview_col']) as comparison_video_col:
                 comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"], height=400, visible=False)
             with gr.Column(elem_classes=['preview_col']) as result_col:
-                result_gallery = gr.Gallery(label='Output', elem_id="gallery1", elem_classes=["preview_box"],
-                                            height=400, visible=False, allow_preview=True, preview=True)
+                result_gallery = gr.Gallery(label='Output', elem_id="gallery2", elem_classes=["preview_box"],
+                                            height=400, visible=False, columns=4)
                 result_slider = ImageSlider(label='Output', interactive=False, show_download_button=True,
                                             elem_id="gallery1", elem_classes=["preview_box", "preview_slider"], height=400, container=True)
         with gr.Row():
