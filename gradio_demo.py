@@ -3,6 +3,7 @@ import copy
 import datetime
 import gc
 import os
+import tempfile
 import time
 import traceback
 from datetime import datetime
@@ -11,6 +12,7 @@ from typing import Tuple, List, Any, Dict
 import einops
 import gradio as gr
 import numpy as np
+import requests
 import torch
 from PIL import Image
 from PIL import PngImagePlugin
@@ -41,12 +43,12 @@ parser.add_argument("--ckpt", type=str, default='models/Juggernaut-XL_v9_RunDiff
 parser.add_argument("--theme", type=str, default='default')
 parser.add_argument("--open_browser", action='store_true', default=True)
 parser.add_argument("--outputs_folder")
-parser.add_argument("--debug")
+parser.add_argument("--debug", action='store_true', default=False)
 args = parser.parse_args()
 server_ip = args.ip
 use_llava = not args.no_llava
-if(args.debug):
-    args.open_browser=False
+if args.debug:
+    args.open_browser = False
 
 if torch.cuda.device_count() >= 2:
     SUPIR_device = 'cuda:0'
@@ -193,19 +195,19 @@ def read_image_metadata(image_path):
     return metadata_str
 
 
-# prompt, stage_1_output_image, result_gallery, result_slider, event_id, fb_score, fb_text, seed, face_gallery, comparison_video
+# prompt, stage_1_output_image, result_gallery, result_slider, slider_full_button, event_id, fb_score, fb_text, seed, face_gallery, comparison_video
 def update_elements(status_label):
     print(f"Label changed: {status_label}")
     prompt_el = gr.update()
-    stage_1_output_image_el = gr.update()
-    result_gallery_el = gr.update()
-    result_slider_el = gr.update()
+    result_gallery_el = gr.update(height=400)
+    result_slider_el = gr.update(height=400)
+    slider_full_btn_el = gr.update()
+    comparison_video_el = gr.update(height=400)
     event_id_el = gr.update()
     fb_score_el = gr.update()
     fb_text_el = gr.update()
     seed_el = gr.update()
     face_gallery_el = gr.update()
-    comparison_video_el = gr.update()
 
     if "Processing Complete" in status_label:
         print(status_label)
@@ -213,15 +215,26 @@ def update_elements(status_label):
             status_container.llava_caption = status_container.llava_captions[0]
             prompt_el = gr.update(value=status_container.llava_caption)
             print(f"LLaVA caption: {status_container.llava_caption}")
+            # Hide gallery, show empty slider
             result_gallery_el = gr.update(visible=False)
+            slider_full_btn_el = gr.update(visible=True)
+            result_slider_el = gr.update(visible=True, value=None)
         elif "Stage 1" in status_label:
             print("Updating stage 1 output image")
-            out_image = status_container.image_data.values()[0]
-            stage_1_output_image_el = gr.update(value=out_image)
+            # Get the first value from status_container.image_data dict
+            src_image_path = list(status_container.image_data.keys())[0]
+            with Image.open(src_image_path) as img:
+                src_image = np.array(img)
+            out_image = list(status_container.image_data.values())[0]
+            # Show slider for stage1
+            result_slider_el = gr.update(value=[src_image, out_image], visible=True)
+            slider_full_btn_el = gr.update(visible=True)
             result_gallery_el = gr.update(visible=False)
         elif "Stage 2" in status_label:
             print("Updating stage 2 output image")
+            # Update the slider with the outputs, hide the gallery
             result_slider_el = gr.update(value=status_container.result_gallery, visible=True)
+            slider_full_btn_el = gr.update(visible=True)
             result_gallery_el = gr.update(visible=False)
             event_id_el = gr.update(value=status_container.event_id)
             fb_score_el = gr.update(value=status_container.fb_score)
@@ -231,19 +244,47 @@ def update_elements(status_label):
             comparison_video_el = gr.update(value=status_container.comparison_video)
         elif "Batch" in status_label:
             print("Updating batch outputs")
-            result_gallery_el = gr.update(value=status_container.result_gallery, visible=True)
+            image_data = status_container.image_data
+            image_values = list(image_data.values())
+            if len(status_container.llava_captions) == len(image_values):
+                gallery_elements = []
+                for i, (img_path, img) in enumerate(image_data.items()):
+                    gallery_elements.append((img, status_container.llava_captions[i]))
+            else:
+                gallery_elements = image_values
+            # Show batch gallery, hide slider
+            result_gallery_el = gr.update(value=gallery_elements, visible=True)
             result_slider_el = gr.update(visible=False)
+            slider_full_btn_el = gr.update(visible=False)
             event_id_el = gr.update(value=status_container.event_id)
             fb_score_el = gr.update(value=status_container.fb_score)
             fb_text_el = gr.update(value=status_container.fb_text)
             seed_el = gr.update(value=status_container.seed)
             face_gallery_el = gr.update(value=status_container.face_gallery)
             comparison_video_el = gr.update(value=status_container.comparison_video)
-    return (prompt_el, stage_1_output_image_el, result_gallery_el, result_slider_el, event_id_el, fb_score_el,
+    return (prompt_el, result_gallery_el, result_slider_el, slider_full_btn_el, event_id_el, fb_score_el,
             fb_text_el, seed_el, face_gallery_el, comparison_video_el)
 
 
 batch_processing_val = False
+
+
+def populate_slider_single():
+    # Fetch the image at http://www.marketingtool.online/en/face-generator/img/faces/avatar-1151ce9f4b2043de0d2e3b7826127998.jpg
+    # and use it as the input image
+    temp_path = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+    temp_path.write(requests.get(
+        "http://www.marketingtool.online/en/face-generator/img/faces/avatar-1151ce9f4b2043de0d2e3b7826127998.jpg").content)
+    temp_path.close()
+    lowres_path = temp_path.name.replace('.jpg', '_lowres.jpg')
+    with Image.open(temp_path.name) as img:
+        current_dims = (img.size[0] // 2, img.size[1] // 2)
+        resized_dims = (img.size[0] // 4, img.size[1] // 4)
+        img = img.resize(current_dims)
+        img.save(temp_path.name)
+        img = img.resize(resized_dims)
+        img.save(lowres_path)
+    return gr.update(value=[lowres_path, temp_path.name], visible=True)
 
 
 def llava_process_single(image, temp, p, question=None, unload=True, progress=gr.Progress()):
@@ -286,10 +327,10 @@ def llava_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], temp, p, q
             step += 1
             progress(step / total_steps, desc="LLaVA processing complete.")
         status_container.llava_captions = output_captions
-        return f"LLaVA Processing Complete: {len(inputs)} images processed"
+        return f"LLaVA Processing Complete: {len(inputs)} images processed at {time.ctime()}."
     else:
         status_container.llava_caption = ""
-        return "LLaVA is not available."
+        return f"LLaVA is not available at {time.ctime()}."
 
 
 def stage1_process_single(image, gamma, unload=True, progress=gr.Progress()):
@@ -337,7 +378,7 @@ def stage1_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], gamma, un
             progress(step / total_steps, desc="Unloading models...")
         all_to_cpu()
     status_container.image_data = output_data
-    return f"Stage 1 Processing Complete: processed {len(inputs)} images"
+    return f"Stage 1 Processing Complete: processed {len(inputs)} images at {time.ctime()}"
 
 
 def stage2_process_single(image, p, ap, n_p, ns, us, edms, sstage1, sstage2, scfg, sseed, schurn, snoise, cfix_type,
@@ -414,6 +455,8 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
         img = HWC3(img)
         img = upscale_image(img, upscale, unit_resolution=32, min_size=1024)
         lq = np.array(img)
+        lq = lq / 255 * 2 - 1
+        lq = torch.tensor(lq, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
 
         counter = 1
         _faces = []
@@ -422,6 +465,9 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
         video_path = None
         bg_caption = img_prompt
         # Only load face model if face restoration is enabled
+        bg_caption = img_prompt
+        face_captions = img_prompt
+
         if apply_face:
             load_face_helper()
             if face_helper is None or not isinstance(face_helper, FaceRestoreHelper):
@@ -435,8 +481,6 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
             lq = lq / 255 * 2 - 1
             lq = torch.tensor(lq, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
 
-            bg_caption = img_prompt
-            face_captions = img_prompt
             if len(face_prompt) > 1:
                 face_captions = face_prompt
             to_gpu(face_helper, SUPIR_device)
@@ -563,7 +607,9 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                                             video_width, video_height)
 
                 all_results.extend(results)
-
+        if len(inputs.keys()) == 1:
+            # Prepend the first input image to all_results for slider
+            all_results.insert(0, list(inputs.values())[0])
         output_data[image_path] = all_results
         status_container.prompt = img_prompt
         status_container.result_gallery = all_results
@@ -577,17 +623,22 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
             with open(f'./history/{event_id[:5]}/{event_id[5:]}/logs.txt', 'w') as f:
                 f.write(str(event_dict))
             f.close()
-            Image.fromarray(img).save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
+            if isinstance(img, np.ndarray):
+                Image.fromarray(img).save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
+            else:
+                img.save(f'./history/{event_id[:5]}/{event_id[5:]}/LQ.png')
             for i, result in enumerate(all_results):
-                Image.fromarray(result).save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
+                if isinstance(img, np.ndarray):
+                    Image.fromarray(result).save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
+                else:
+                    img.save(f'./history/{event_id[:5]}/{event_id[5:]}/HQ_{i}.png')
         if not batch_processing_val:  # Check if batch processing has been stopped
             break
 
-    status_container.result_gallery = output_data
     if not batch_processing_val or unload:
         all_to_cpu()
 
-    return f"Stage 2 Processing Complete: Processed {num_images} images."
+    return f"Stage 2 Processing Complete: Processed {num_images} images at {time.ctime()}."
 
 
 def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n_prompt, num_samples, upscale,
@@ -596,7 +647,6 @@ def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n
                   num_images, random_seed, apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt,
                   batch_process_llava, temperature, top_p, qs, make_comparison_video, video_duration, video_fps,
                   video_width, video_height, progress=gr.Progress()):
-    
     global batch_processing_val, llava_agent
     batch_processing_val = True
     # Get the list of image files in the folder
@@ -623,15 +673,15 @@ def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n
         captions = [main_prompt] * total_images
 
     if not batch_processing_val:
-        return "Batch Processing Complete: Cancelled"
-    
+        return f"Batch Processing Complete: Cancelled at {time.ctime()}."
+
     if apply_stage_1:
         print("Processing images (Stage 1)")
-        stage1_process(img_data, gamma_correction, unload=True, progress=progress)
-    
+        stage1_process(img_data, gamma_correction, unload=False, progress=progress)
+
     if not batch_processing_val:
-        return "Batch Processing Complete: Cancelled"
-    
+        return f"Batch Processing Complete: Cancelled at {time.ctime()}."
+
     print("Processing images (Stage 2)")
     stage2_process(img_data, captions, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2, s_cfg,
                    seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, gamma_correction, linear_CFG,
@@ -639,9 +689,9 @@ def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n
                    apply_stage_1, face_resolution, apply_bg, apply_face, face_prompt, make_comparison_video,
                    video_duration, video_fps, video_width, video_height, dont_update_progress=True,
                    out_folder=outputs_folder, batch_process_folder=batch_process_folder, unload=True, progress=progress)
-    
+
     batch_processing_val = False
-    return f"Batch Processing Complete: processed {num_images} images"
+    return f"Batch Processing Complete: processed {num_images} images at {time.ctime()}."
 
 
 def stop_batch_upscale(progress=gr.Progress()):
@@ -658,11 +708,11 @@ def load_and_reset(param_setting):
     schurn = 5
     snoise = 1.003
     ap = 'Cinematic, High Contrast, highly detailed, taken using a Canon EOS R camera, hyper detailed photo - ' \
-               'realistic maximum detail, 32k, Color Grading, ultra HD, extreme meticulous detailing, skin pore ' \
-               'detailing, hyper sharpness, perfect without deformations.'
+         'realistic maximum detail, 32k, Color Grading, ultra HD, extreme meticulous detailing, skin pore ' \
+         'detailing, hyper sharpness, perfect without deformations.'
     np = 'painting, oil painting, illustration, drawing, art, sketch, oil painting, cartoon, CG Style, ' \
-               '3D render, unreal engine, blurring, dirty, messy, worst quality, low quality, frames, watermark, ' \
-               'signature, jpeg artifacts, deformed, lowres, over-smooth'
+         '3D render, unreal engine, blurring, dirty, messy, worst quality, low quality, frames, watermark, ' \
+         'signature, jpeg artifacts, deformed, lowres, over-smooth'
     cfix_type = 'Wavelet'
     l_s_stage2 = 0.0
     l_s_s_stage2 = False
@@ -692,8 +742,21 @@ def submit_feedback(evt_id, f_score, f_text):
         return 'Submit failed, the server is not set to log history.'
 
 
+slider_full = False
+
+
+def toggle_full_slider():
+    global slider_full
+    if slider_full:
+        slider_full = False
+        return gr.update(elem_classes=["preview_box", "preview_slider"], visible=True), gr.update(elem_classes=["slider_button"], visible=True)
+    else:
+        slider_full = True
+        return gr.update(elem_classes=["preview_box", "preview_slider", "full_slider"], visible=True), gr.update(elem_classes=["slider_button", "full"], visible=True)
+
+
 def toggle_compare_elements(enable: bool) -> Tuple[gr.update, gr.update]:
-    return gr.update(visible=enable), gr.update(visible=enable)
+    return gr.update(visible=enable), gr.update(visible=enable), gr.update(visible=enable)
 
 
 title_md = """
@@ -734,21 +797,29 @@ with block:
         with gr.Row():
             output_label = gr.Label(label="Progress", elem_classes=["progress_label"])
         with gr.Row(equal_height=True):
-            with gr.Column() as input_col:
+            with gr.Column(elem_classes=['preview_col']) as input_col:
                 input_image = gr.Image(type="filepath", elem_id="image-input", label="Input Image",
-                                       elem_classes=["preview_box"], height=300, sources=["upload"])
-            with gr.Column(visible=False) as stage_1_out_col:
-                stage_1_output_image = gr.Image(type="numpy", elem_id="image-s1", label="Stage1 Output",
-                                                elem_classes=["preview_box"], height=300, interactive=False)
-            with gr.Column(visible=False) as comparison_video_col:
-                comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"], height=300)
-            with gr.Column() as result_col:
-                result_gallery = gr.Gallery(label='Output', elem_id="gallery1", elem_classes=["preview_box"], height=300, visible=False)
+                                       elem_classes=["preview_box"], height=400, sources=["upload"])
+            with gr.Column(visible=False, elem_classes=['preview_col']) as comparison_video_col:
+                comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"], height=400,
+                                            visible=False)
+            with gr.Column(elem_classes=['preview_col']) as result_col:
+                result_gallery = gr.Gallery(label='Output', elem_id="gallery2", elem_classes=["preview_box"],
+                                            height=400, visible=False, columns=4)
                 result_slider = ImageSlider(label='Output', interactive=False, show_download_button=True,
-                                                 elem_id="gallery1", elem_classes=["preview_box"], height=300)
+                                            elem_id="gallery1", elem_classes=["preview_box", "preview_slider"],
+                                            height=400, container=True)
+                dl_symbol = "\U00002B73"  # ⭳
+                fullscreen_symbol = "\U000026F6"  # ⛶
+                # slider_dl_button = gr.Button(value=dl_symbol, elem_classes=["slider_button"], visible=True,
+                #                              elem_id="download_button")
+                slider_full_button = gr.Button(value=fullscreen_symbol, elem_classes=["slider_button"], visible=True,
+                                               elem_id="fullscreen_button")
         with gr.Row():
             with gr.Column():
                 with gr.Accordion("General options", open=True):
+                    if args.debug:
+                        populate_slider = gr.Button(value="Populate Slider")
                     upscale = gr.Slider(label="Upscale Size (Stage 2)", minimum=1, maximum=8, value=1, step=0.1)
                     prompt = gr.Textbox(label="Prompt", value="")
                     face_prompt = gr.Textbox(label="Face Prompt",
@@ -895,7 +966,7 @@ with block:
                  batch_process_llava, temperature, top_p, qs, make_comparison_video, video_duration, video_fps,
                  video_width, video_height]
 
-    output_elements = [prompt, stage_1_output_image, result_gallery, result_slider, event_id, fb_score, fb_text, seed,
+    output_elements = [prompt, result_gallery, result_slider, slider_full_button, event_id, fb_score, fb_text, seed,
                        face_gallery, comparison_video]
 
     llava_button.click(fn=llava_process_single, inputs=[input_image, temperature, top_p, qs], outputs=output_label,
@@ -916,10 +987,16 @@ with block:
                         outputs=output_elements)
 
     make_comparison_video.change(fn=toggle_compare_elements, inputs=[make_comparison_video],
-                                 outputs=[comparison_video_col, compare_video_row])
+                                 outputs=[comparison_video_col, compare_video_row, comparison_video])
     submit_button.click(fn=submit_feedback, inputs=[event_id, fb_score, fb_text], outputs=[fb_text])
     input_image.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
     upscale.change(fn=update_target_resolution, inputs=[input_image, upscale], outputs=[target_res])
+    populate_slider.click(fn=populate_slider_single, outputs=[result_slider],
+                          show_progress=True, queue=True)
+
+    #slider_dl_button.click(fn=download_slider_image, inputs=[result_slider], show_progress=False, queue=True)
+    slider_full_button.click(fn=toggle_full_slider, outputs=[result_slider, slider_full_button],
+                             show_progress=False, queue=True)
 
 if args.port is not None:  # Check if the --port argument is provided
     block.launch(server_name=server_ip, server_port=args.port, share=args.share, inbrowser=args.open_browser)
