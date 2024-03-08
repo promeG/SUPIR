@@ -197,9 +197,9 @@ def read_image_metadata(image_path):
 def update_elements(status_label):
     print(f"Label changed: {status_label}")
     prompt_el = gr.update()
-    result_gallery_el = gr.update(height=300)
-    result_slider_el = gr.update(height=300)
-    comparison_video_el = gr.update(height=300)
+    result_gallery_el = gr.update(height=400)
+    result_slider_el = gr.update(height=400)
+    comparison_video_el = gr.update(height=400)
     event_id_el = gr.update()
     fb_score_el = gr.update()
     fb_text_el = gr.update()
@@ -646,7 +646,7 @@ def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n
 
     if apply_stage_1:
         print("Processing images (Stage 1)")
-        stage1_process(img_data, gamma_correction, unload=True, progress=progress)
+        stage1_process(img_data, gamma_correction, unload=False, progress=progress)
 
     if not batch_processing_val:
         return f"Batch Processing Complete: Cancelled at {time.ctime()}."
@@ -760,7 +760,7 @@ with block:
                 comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"], height=400, visible=False)
             with gr.Column(elem_classes=['preview_col']) as result_col:
                 result_gallery = gr.Gallery(label='Output', elem_id="gallery1", elem_classes=["preview_box"],
-                                            height=300, visible=False)
+                                            height=400, visible=False, allow_preview=True, preview=True)
                 result_slider = ImageSlider(label='Output', interactive=False, show_download_button=True,
                                             elem_id="gallery1", elem_classes=["preview_box", "preview_slider"], height=400, container=True)
         with gr.Row():
