@@ -287,10 +287,10 @@ def llava_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], temp, p, q
             step += 1
             progress(step / total_steps, desc="LLaVA processing complete.")
         status_container.llava_captions = output_captions
-        return f"LLaVA Processing Complete: {len(inputs)} images processed"
+        return f"LLaVA Processing Complete: {len(inputs)} images processed at {time.ctime()}."
     else:
         status_container.llava_caption = ""
-        return "LLaVA is not available."
+        return f"LLaVA is not available at {time.ctime()}."
 
 
 def stage1_process_single(image, gamma, unload=True, progress=gr.Progress()):
@@ -338,7 +338,7 @@ def stage1_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], gamma, un
             progress(step / total_steps, desc="Unloading models...")
         all_to_cpu()
     status_container.image_data = output_data
-    return f"Stage 1 Processing Complete: processed {len(inputs)} images"
+    return f"Stage 1 Processing Complete: processed {len(inputs)} images at {time.ctime()}"
 
 
 def stage2_process_single(image, p, ap, n_p, ns, us, edms, sstage1, sstage2, scfg, sseed, schurn, snoise, cfix_type,
@@ -567,7 +567,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                                             video_width, video_height)
 
                 all_results.extend(results)
-        if len(inputs.keys) == 1:
+        if len(inputs.keys()) == 1:
             # Prepend the first input image to all_results
             all_results.insert(0, list(inputs.values())[0])
         output_data[image_path] = all_results
@@ -593,7 +593,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
     if not batch_processing_val or unload:
         all_to_cpu()
 
-    return f"Stage 2 Processing Complete: Processed {num_images} images."
+    return f"Stage 2 Processing Complete: Processed {num_images} images at {time.ctime()}."
 
 
 def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n_prompt, num_samples, upscale,
@@ -629,14 +629,14 @@ def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n
         captions = [main_prompt] * total_images
 
     if not batch_processing_val:
-        return "Batch Processing Complete: Cancelled"
+        return f"Batch Processing Complete: Cancelled at {time.ctime()}."
     
     if apply_stage_1:
         print("Processing images (Stage 1)")
         stage1_process(img_data, gamma_correction, unload=True, progress=progress)
     
     if not batch_processing_val:
-        return "Batch Processing Complete: Cancelled"
+        return f"Batch Processing Complete: Cancelled at {time.ctime()}."
     
     print("Processing images (Stage 2)")
     stage2_process(img_data, captions, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2, s_cfg,
@@ -647,7 +647,7 @@ def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n
                    out_folder=outputs_folder, batch_process_folder=batch_process_folder, unload=True, progress=progress)
     
     batch_processing_val = False
-    return f"Batch Processing Complete: processed {num_images} images"
+    return f"Batch Processing Complete: processed {num_images} images at {time.ctime()}."
 
 
 def stop_batch_upscale(progress=gr.Progress()):
