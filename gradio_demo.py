@@ -195,12 +195,13 @@ def read_image_metadata(image_path):
     return metadata_str
 
 
-# prompt, stage_1_output_image, result_gallery, result_slider, event_id, fb_score, fb_text, seed, face_gallery, comparison_video
+# prompt, stage_1_output_image, result_gallery, result_slider, slider_full_button, event_id, fb_score, fb_text, seed, face_gallery, comparison_video
 def update_elements(status_label):
     print(f"Label changed: {status_label}")
     prompt_el = gr.update()
     result_gallery_el = gr.update(height=400)
     result_slider_el = gr.update(height=400)
+    slider_full_btn_el = gr.update()
     comparison_video_el = gr.update(height=400)
     event_id_el = gr.update()
     fb_score_el = gr.update()
@@ -216,6 +217,7 @@ def update_elements(status_label):
             print(f"LLaVA caption: {status_container.llava_caption}")
             # Hide gallery, show empty slider
             result_gallery_el = gr.update(visible=False)
+            slider_full_btn_el = gr.update(visible=True)
             result_slider_el = gr.update(visible=True, value=None)
         elif "Stage 1" in status_label:
             print("Updating stage 1 output image")
@@ -226,11 +228,13 @@ def update_elements(status_label):
             out_image = list(status_container.image_data.values())[0]
             # Show slider for stage1
             result_slider_el = gr.update(value=[src_image, out_image], visible=True)
+            slider_full_btn_el = gr.update(visible=True)
             result_gallery_el = gr.update(visible=False)
         elif "Stage 2" in status_label:
             print("Updating stage 2 output image")
             # Update the slider with the outputs, hide the gallery
             result_slider_el = gr.update(value=status_container.result_gallery, visible=True)
+            slider_full_btn_el = gr.update(visible=True)
             result_gallery_el = gr.update(visible=False)
             event_id_el = gr.update(value=status_container.event_id)
             fb_score_el = gr.update(value=status_container.fb_score)
@@ -251,13 +255,14 @@ def update_elements(status_label):
             # Show batch gallery, hide slider
             result_gallery_el = gr.update(value=gallery_elements, visible=True)
             result_slider_el = gr.update(visible=False)
+            slider_full_btn_el = gr.update(visible=False)
             event_id_el = gr.update(value=status_container.event_id)
             fb_score_el = gr.update(value=status_container.fb_score)
             fb_text_el = gr.update(value=status_container.fb_text)
             seed_el = gr.update(value=status_container.seed)
             face_gallery_el = gr.update(value=status_container.face_gallery)
             comparison_video_el = gr.update(value=status_container.comparison_video)
-    return (prompt_el, result_gallery_el, result_slider_el, event_id_el, fb_score_el,
+    return (prompt_el, result_gallery_el, result_slider_el, slider_full_btn_el, event_id_el, fb_score_el,
             fb_text_el, seed_el, face_gallery_el, comparison_video_el)
 
 
@@ -961,7 +966,7 @@ with block:
                  batch_process_llava, temperature, top_p, qs, make_comparison_video, video_duration, video_fps,
                  video_width, video_height]
 
-    output_elements = [prompt, result_gallery, result_slider, event_id, fb_score, fb_text, seed,
+    output_elements = [prompt, result_gallery, result_slider, slider_full_button, event_id, fb_score, fb_text, seed,
                        face_gallery, comparison_video]
 
     llava_button.click(fn=llava_process_single, inputs=[input_image, temperature, top_p, qs], outputs=output_label,
