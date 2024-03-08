@@ -38,7 +38,8 @@ parser.add_argument("--loading_half_params", action='store_true', default=True)
 parser.add_argument("--use_tile_vae", action='store_true', default=True)
 parser.add_argument("--encoder_tile_size", type=int, default=512)
 parser.add_argument("--decoder_tile_size", type=int, default=64)
-parser.add_argument("--load_8bit_llava", action='store_true', default=False)
+parser.add_argument("--load_8bit_llava", action='store_true', default=True)
+parser.add_argument("--load_4bit_llava", action='store_true', default=False)
 parser.add_argument("--ckpt", type=str, default='models/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors')
 parser.add_argument("--theme", type=str, default='default')
 parser.add_argument("--open_browser", action='store_true', default=True)
@@ -118,7 +119,7 @@ def load_llava():
     if llava_agent is None and use_llava:
         llava_path = get_model('liuhaotian/llava-v1.5-7b')
         llava_agent = LLavaAgent(llava_path, device='cuda', load_8bit=args.load_8bit_llava,
-                                 load_4bit=False)
+                                 load_4bit=args.load_4bit_llava)
 
 
 def all_to_cpu():
@@ -287,11 +288,18 @@ def populate_slider_single():
     return gr.update(value=[lowres_path, temp_path.name], visible=True)
 
 
-def llava_process_single(image, temp, p, question=None, unload=True, progress=gr.Progress()):
+def llava_process_single(image, temp, p,apply_stage_1,gamma_correction ,question=None, unload=True, progress=gr.Progress()):
     global status_container
     status_container = StatusContainer()
     with Image.open(image) as img:
         image_data = np.array(img)
+        if apply_stage_1:
+            img_data = {}
+            img_data["llava_temp"] = image_data
+            status_container.image_data = img_data
+            print("Processing images (Stage 1)")
+            stage1_process(img_data, gamma_correction, unload=False, progress=progress)
+            image_data=status_container.image_data["llava_temp"]
         input_data = {image: image_data}
     return llava_process(input_data, temp, p, question, unload, progress)
 
@@ -451,9 +459,17 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                       'spt_linear_CFG': spt_linear_CFG, 'spt_linear_s_stage2': spt_linear_s_stage2,
                       'model_select': model_select, 'apply_stage_1': apply_stage_1, 'face_resolution': face_resolution,
                       'apply_bg': apply_bg, 'face_prompt': face_prompt}
-
+     
+        if apply_stage_1:
+            img_data = {}
+            img_data[image_path] = np.array(img)
+            status_container.image_data = img_data
+            print("Processing images (Stage 1)")
+            stage1_process(img_data, gamma_correction, unload=False, progress=progress)
+            img=status_container.image_data[image_path]
         img = HWC3(img)
         img = upscale_image(img, upscale, unit_resolution=32, min_size=1024)
+
         lq = np.array(img)
         lq = lq / 255 * 2 - 1
         lq = torch.tensor(lq, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
@@ -467,6 +483,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
         # Only load face model if face restoration is enabled
         bg_caption = img_prompt
         face_captions = img_prompt
+
 
         if apply_face:
             load_face_helper()
@@ -664,6 +681,10 @@ def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n
     # Store it globally
     status_container.image_data = img_data
 
+    if apply_stage_1:
+        print("Processing images (Stage 1)")
+        stage1_process(img_data, gamma_correction, unload=False, progress=progress)
+
     # Create an array of captions
     if batch_process_llava:
         print('Processing LLaVA')
@@ -674,10 +695,6 @@ def batch_upscale(batch_process_folder, outputs_folder, main_prompt, a_prompt, n
 
     if not batch_processing_val:
         return f"Batch Processing Complete: Cancelled at {time.ctime()}."
-
-    if apply_stage_1:
-        print("Processing images (Stage 1)")
-        stage1_process(img_data, gamma_correction, unload=False, progress=progress)
 
     if not batch_processing_val:
         return f"Batch Processing Complete: Cancelled at {time.ctime()}."
@@ -882,7 +899,7 @@ with block:
                                 placeholder="R:\SUPIR video\comparison_images\outputs")
                     with gr.Row():
                         with gr.Column():
-                            apply_stage_1 = gr.Checkbox(label="Apply Stage 1 Before Stage 2", value=False)
+                            apply_stage_1 = gr.Checkbox(label="Apply Stage 1 Before Stage 2 (Applies LLaVA Too)", value=False)
                             batch_process_llava = gr.Checkbox(label="Batch Process LLaVA", value=False)
 
                 with gr.Accordion("Advanced options", open=False):
@@ -971,7 +988,7 @@ with block:
     output_elements = [prompt, result_gallery, result_slider, slider_full_button, event_id, fb_score, fb_text, seed,
                        face_gallery, comparison_video]
 
-    llava_button.click(fn=llava_process_single, inputs=[input_image, temperature, top_p, qs], outputs=output_label,
+    llava_button.click(fn=llava_process_single, inputs=[input_image, temperature, top_p,apply_stage_1,gamma_correction, qs], outputs=output_label,
                        show_progress=True, queue=True)
     stage_1_button.click(fn=stage1_process_single, inputs=[input_image, gamma_correction], outputs=output_label,
                          show_progress=True, queue=True)
