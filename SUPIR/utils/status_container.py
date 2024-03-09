@@ -4,6 +4,7 @@ class StatusContainer:
         self.prompt: str = ""
         self.image_data = {}
         self.output_data = {}
+        self.events_dict = {}
         self.result_gallery = None
         self.event_id = ""
         self.fb_score = 0

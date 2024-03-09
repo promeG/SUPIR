@@ -92,7 +92,7 @@ class DiffusionEngine(pl.LightningModule):
         else:
             raise NotImplementedError
 
-        missing, unexpected = self.load_state_dict(sd, strict=False)
+        # missing, unexpected = self.load_state_dict(sd, strict=False)
         # if len(missing) > 0:
         #     print(f"Missing Keys: {missing}")
         # if len(unexpected) > 0:

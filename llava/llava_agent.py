@@ -32,6 +32,7 @@ class LLavaAgent:
         self.tokenizer = tokenizer
         self.context_len = context_len
         self.load_8bit = load_8bit
+        self.load_4bit = load_4bit
         self.qs = 'Describe this image and its style in a very detailed manner.'
         self.conv_mode = conv_mode
 
@@ -103,7 +104,7 @@ class LLavaAgent:
         return img_captions
 
     def to(self, device):
-        if self.load_8bit:
+        if self.load_8bit or self.load_4bit:
             return self
         self.device = device
         self.model.to(device)
