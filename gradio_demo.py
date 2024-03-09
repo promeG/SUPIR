@@ -364,14 +364,14 @@ def llava_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], temp, p, q
         return f"LLaVA is not available at {time.ctime()}."
 
 
-def stage1_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], gamma, unload=True, progress=None) -> str:
+def stage1_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], gamma, model_select, ckpt_select, unload=True, progress=None) -> str:
     global model
     global status_container
     output_data = {}
     total_steps = len(inputs.keys()) + (1 if unload else 0)
     step = 0
 
-    load_model(model_select_radio, progress)
+    load_model(model_select, ckpt_select, progress)
     model = to_gpu(model, SUPIR_device)
     all_results = []
     for image_path, img in inputs.items():
@@ -779,7 +779,7 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
     total_images = len(img_data.keys())
     if apply_stage_1:
         print("Processing images (Stage 1)")
-        last_result = stage1_process(img_data, gamma_correction, unload=False, progress=progress)
+        last_result = stage1_process(img_data, gamma_correction, model_select, ckpt_select, unload=False, progress=progress)
 
     if not batch_processing_val:
         return f"Batch Processing Complete: Cancelled at {time.ctime()}.", last_result
