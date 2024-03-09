@@ -53,7 +53,7 @@ use_llava = not args.no_llava
 
 # load SUPIR
 model = create_SUPIR_model('options/SUPIR_v0.yaml', supir_sign=args.SUPIR_sign).to(SUPIR_device)
-model.ae_dtype = convert_dtype(args.ae_dtype)
+model.ae_dtype_radio = convert_dtype(args.ae_dtype)
 model.model.dtype = convert_dtype(args.diff_dtype)
 # load LLaVA
 if use_llava:

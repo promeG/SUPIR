@@ -104,7 +104,7 @@ class LLavaAgent:
         return img_captions
 
     def to(self, device):
-        if self.load_8bit:
+        if self.load_8bit or self.load_4bit:
             return self
         if self.load_4bit:
             return self
