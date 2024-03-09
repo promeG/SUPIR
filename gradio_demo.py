@@ -476,7 +476,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
     event_data = {}
     for image_path, img in inputs.items():
         output_data[image_path] = []
-        event_data[image_path] = []
+        event_data[image_path] = {}
         all_results = []
         img_prompt = captions[idx]
         if not apply_llava:
@@ -498,7 +498,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                       'model_select': model_select, 'apply_stage_1': apply_stage_1_ckeckbox,
                       'face_resolution': face_resolution,
                       'apply_bg': apply_bg, 'face_prompt': face_prompt}
-        event_data[image_path].append(event_dict)
+        event_data[image_path] = event_dict
         img = HWC3(img)
         img = upscale_image(img, upscale, unit_resolution=32, min_size=1024)
         lq = np.array(img)
@@ -699,8 +699,11 @@ def process_outputs(output_dir, make_comparison_video, video_duration, video_fps
             # Embed metadata into the image
             img = Image.fromarray(result)
             meta = PngImagePlugin.PngInfo()
-            for key, value in event_dict.items():
-                meta.add_text(key, str(value))
+            if isinstance(event_dict, dict):
+                for key, value in event_dict.items():
+                    meta.add_text(key, str(value))
+            else:
+                print(f"Event dict is not a dictionary: {event_dict} type is {type(event_dict)}")
             img.save(save_path, "PNG", pnginfo=meta)
             metadata_path = os.path.join(metadata_dir,
                                          f'{os.path.splitext(os.path.basename(save_path))[0]}.txt')
