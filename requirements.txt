@@ -1,4 +1,4 @@
-gradio==4.19.2
+gradio
 gradio_imageslider
 gradio_client
 Markdown==3.4.1
