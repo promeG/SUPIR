@@ -130,7 +130,7 @@ def load_model(selected_model, selected_checkpoint, progress=None):
         if last_used_checkpoint is None:
             last_used_checkpoint = checkpoint_use
 
-    if last_used_checkpoint is not checkpoint_use:
+    if last_used_checkpoint != checkpoint_use:
         model = None
         torch.cuda.empty_cache()
         last_used_checkpoint = checkpoint_use
@@ -1107,7 +1107,7 @@ with block:
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
-    with gr.Tab("About_V27"):
+    with gr.Tab("About_V28"):
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
