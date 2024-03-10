@@ -1091,7 +1091,7 @@ with block:
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
-    with gr.Tab("About_V25"):
+    with gr.Tab("About_V26"):
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
