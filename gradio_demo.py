@@ -34,8 +34,8 @@ parser.add_argument("--port", type=int)
 parser.add_argument("--no_llava", action='store_true', default=False)
 parser.add_argument("--use_image_slider", action='store_true', default=False)
 parser.add_argument("--log_history", action='store_true', default=False)
-parser.add_argument("--loading_half_params", action='store_true', default=True)
-parser.add_argument("--use_tile_vae", action='store_true', default=True)
+parser.add_argument("--loading_half_params", action='store_true', default=False)
+parser.add_argument("--use_tile_vae", action='store_true', default=False)
 parser.add_argument("--encoder_tile_size", type=int, default=512)
 parser.add_argument("--decoder_tile_size", type=int, default=64)
 parser.add_argument("--load_8bit_llava", action='store_true', default=False)
@@ -121,10 +121,13 @@ def load_face_helper():
 def load_model(selected_model, selected_checkpoint, progress=None):
     global model
     if model is None:
+        checkpoint_use = args.ckpt
+        if selected_checkpoint:
+            checkpoint_use = os.path.join(args.ckpt_dir, selected_checkpoint)
         if progress is not None:
             progress(1 / 2, desc="Loading SUPIR...")
         model = create_SUPIR_model('options/SUPIR_v0.yaml', supir_sign='Q', device='cpu',
-                                   ckpt=selected_checkpoint if selected_checkpoint else args.checkpoint)
+                                   ckpt=checkpoint_use)
         if args.loading_half_params:
             model = model.half()
         if args.use_tile_vae:
@@ -201,6 +204,8 @@ def update_target_resolution(img, do_upscale):
 
 
 def read_image_metadata(image_path):
+    if image_path is None:
+        return
     # Check if the file exists
     if not os.path.exists(image_path):
         return "File does not exist."
@@ -514,10 +519,11 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
         
         # Only load face model if face restoration is enabled
         bg_caption = img_prompt
-        face_captions = img_prompt
+        face_captions = [img_prompt]
 
-
+        
         if apply_face:
+            lq = np.array(img)
             load_face_helper()
             if face_helper is None or not isinstance(face_helper, FaceRestoreHelper):
                 raise ValueError('Face helper not loaded')
@@ -531,7 +537,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
             lq = torch.tensor(lq, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
 
             if len(face_prompt) > 1:
-                face_captions = face_prompt
+                face_captions = [face_prompt]
             to_gpu(face_helper, SUPIR_device)
 
         for _ in range(num_images):
@@ -550,7 +556,6 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                     faces.append(face)
 
                 for face, caption in zip(faces, face_captions):
-                    caption = [caption]
 
                     from torch.nn.functional import interpolate
                     face = interpolate(face, size=face_resolution, mode='bilinear', align_corners=False)
@@ -559,7 +564,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                                                               512 - face_resolution // 2, 512 - face_resolution // 2),
                                                        'constant', 0)
 
-                    samples = model.batchify_sample(face, caption, num_steps=edm_steps, restoration_scale=s_stage1,
+                    samples = model.batchify_sample(face, [caption], num_steps=edm_steps, restoration_scale=s_stage1,
                                                     s_churn=s_churn,
                                                     s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
                                                     num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
@@ -616,14 +621,14 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                     0, 255).astype(np.uint8)
                 results = [x_samples[i] for i in range(num_samples)]
 
-                image_generation_time = time.time() - start_time
-                desc = f"Generated image {counter}/{num_images} in {image_generation_time:.2f} seconds"
-                counter += 1
-                if not dont_update_progress and progress is not None:
-                    progress(counter / num_images, desc=desc)
-                print(desc)  # Print the progress
-                start_time = time.time()  # Reset the start time for the next image
-                all_results.extend(results)
+            image_generation_time = time.time() - start_time
+            desc = f"Generated image {counter}/{num_images} in {image_generation_time:.2f} seconds"
+            counter += 1
+            if not dont_update_progress and progress is not None:
+                progress(counter / num_images, desc=desc)
+            print(desc)  # Print the progress
+            start_time = time.time()  # Reset the start time for the next image
+            all_results.extend(results)
         if len(inputs.keys()) == 1:
             # Prepend the first input image to all_results for slider
             all_results.insert(0, list(inputs.values())[0])
@@ -717,7 +722,9 @@ def process_outputs(output_dir, make_comparison_video, video_duration, video_fps
                 video_path = None
             if make_comparison_video:
                 full_save_image_path = os.path.abspath(save_path)
-                create_comparison_video(image_path, full_save_image_path, video_path, video_duration, video_fps,
+                org_image_absolute_path = os.path.abspath(image_path)
+                status_container.comparison_video = video_path
+                create_comparison_video(org_image_absolute_path, full_save_image_path, video_path, video_duration, video_fps,
                                         video_width, video_height)
 
 
@@ -736,6 +743,9 @@ def start_batch_process(batch_process_folder, outputs_folder, main_prompt, a_pro
         return "No input folder provided."
     if not os.path.exists(batch_process_folder):
         return "The input folder does not exist."
+
+    if len(outputs_folder) < 2:
+        outputs_folder=args.outputs_folder
 
     image_files = [file for file in os.listdir(batch_process_folder) if
                    file.lower().endswith((".png", ".jpg", ".jpeg"))]
@@ -785,6 +795,7 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
     if apply_stage_1:
         print("Processing images (Stage 1)")
         last_result = stage1_process(img_data, gamma_correction, model_select, ckpt_select, unload=False, progress=progress)
+        img_data = status_container.image_data
 
     if not batch_processing_val:
         return f"Batch Processing Complete: Cancelled at {time.ctime()}.", last_result
@@ -949,9 +960,13 @@ with block:
                         populate_slider = gr.Button(value="Populate Slider")
                         populate_slider.click(fn=populate_slider_single, outputs=[result_slider],
                                               show_progress=True, queue=True)
-                    apply_stage_1_ckeckbox = gr.Checkbox(label="Apply Stage 1", value=False)
-                    apply_llava_checkbox = gr.Checkbox(label="Apply LLaVa", value=False)
-                    apply_stage_2_checkbox = gr.Checkbox(label="Apply Stage 2", value=True)
+                    with gr.Row():
+                        with gr.Column():
+                            apply_stage_1_ckeckbox = gr.Checkbox(label="Apply Stage 1", value=False)
+                        with gr.Column():
+                            apply_llava_checkbox = gr.Checkbox(label="Apply LLaVa", value=False)
+                        with gr.Column():
+                            apply_stage_2_checkbox = gr.Checkbox(label="Apply Stage 2", value=True)
                     show_select = args.ckpt_browser
                     ckpt_select_dropdown = gr.Dropdown(label="Model", choices=list_models(), value=selected_model(),
                                                        interactive=True)
@@ -960,7 +975,7 @@ with block:
                     face_prompt_textbox = gr.Textbox(label="Face Prompt",
                                                      placeholder="Optional, uses main prompt if not provided",
                                                      value="")
-                    target_res_textbox = gr.Textbox(label="Input / Output Resolution", value="", interactive=False)
+
 
                 with gr.Accordion("Stage1 options", open=False):
                     gamma_correction_slider = gr.Slider(label="Gamma Correction", minimum=0.1, maximum=2.0, value=1.0,
@@ -1006,6 +1021,7 @@ with block:
                                                  "The image is a realistic photography, not an art painting.")
 
             with gr.Column():
+                target_res_textbox = gr.Textbox(label="Input / Output Resolution", value="", interactive=False)
                 with gr.Accordion("Batch options", open=True):
                     with gr.Row():
                         with gr.Column():
@@ -1075,7 +1091,7 @@ with block:
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
-    with gr.Tab("About"):
+    with gr.Tab("About_V25"):
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
