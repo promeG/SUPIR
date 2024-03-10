@@ -458,7 +458,7 @@ def start_single_process(input_image, prompt, a_prompt, n_prompt, num_samples, u
                                   apply_face,
                                   face_prompt, apply_llava, temperature, top_p, qs, make_comparison_video,
                                   video_duration,
-                                  video_fps, video_width, video_height, progress=progress)
+                                  video_fps, video_width, video_height,"", progress=progress)
     except Exception as e:
         print(f"An exception occurred: {e} at {traceback.format_exc()}")
         batch_processing_val = False
@@ -1109,7 +1109,7 @@ with block:
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
-    with gr.Tab("About_V30"):
+    with gr.Tab("About_V31"):
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
