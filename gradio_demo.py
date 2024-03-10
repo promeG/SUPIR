@@ -34,8 +34,8 @@ parser.add_argument("--port", type=int)
 parser.add_argument("--no_llava", action='store_true', default=False)
 parser.add_argument("--use_image_slider", action='store_true', default=False)
 parser.add_argument("--log_history", action='store_true', default=False)
-parser.add_argument("--loading_half_params", action='store_true', default=False)
-parser.add_argument("--use_tile_vae", action='store_true', default=False)
+parser.add_argument("--loading_half_params", action='store_true', default=True)
+parser.add_argument("--use_tile_vae", action='store_true', default=True)
 parser.add_argument("--encoder_tile_size", type=int, default=512)
 parser.add_argument("--decoder_tile_size", type=int, default=64)
 parser.add_argument("--load_8bit_llava", action='store_true', default=False)
@@ -299,16 +299,7 @@ def update_elements(status_label):
             comparison_video_el = gr.update(value=status_container.comparison_video)
         elif "Batch" in status_label:
             print("Updating batch outputs")
-            image_data = status_container.image_data
-            image_values = list(image_data.values())
-            if len(status_container.llava_captions) == len(image_values):
-                gallery_elements = []
-                for i, (img_path, img) in enumerate(image_data.items()):
-                    gallery_elements.append((img, status_container.llava_captions[i]))
-            else:
-                gallery_elements = image_values
-            # Show batch gallery, hide slider
-            result_gallery_el = gr.update(value=gallery_elements, visible=True)
+            result_gallery_el = gr.update(value=status_container.result_gallery, visible=True)
             result_slider_el = gr.update(visible=False)
             slider_full_btn_el = gr.update(visible=False)
             event_id_el = gr.update(value=status_container.event_id)
@@ -1118,7 +1109,7 @@ with block:
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
-    with gr.Tab("About_V29"):
+    with gr.Tab("About_V30"):
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
