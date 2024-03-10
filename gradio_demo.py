@@ -479,7 +479,8 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                    s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
                    gamma_correction, linear_cfg, linear_s_stage2, spt_linear_cfg, spt_linear_s_stage2, model_select,
                    ckpt_select, num_images, random_seed, apply_llava, face_resolution, apply_bg, apply_face,
-                   face_prompt, dont_update_progress=False, unload=True, progress=gr.Progress()):
+                   face_prompt,outputs_folder, make_comparison_video, video_duration, video_fps,
+                    video_width, video_height, batch_process_folder,dont_update_progress=False, unload=True, progress=gr.Progress()):
     global model, status_container, event_id
 
     load_model(model_select, ckpt_select, progress)
@@ -491,13 +492,19 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
 
     output_data = {}
     event_data = {}
+    counter = 1
+    all_results = []
+    total_images = len(inputs.items()) * num_images
     for image_path, img in inputs.items():
         output_data[image_path] = []
         event_data[image_path] = {}
-        all_results = []
+        
+        number_of_images_results = []
         img_prompt = captions[idx]
+        idx=idx+1
+
         if not apply_llava:
-            cap_path = os.path.splitext(image_path)[0] + ".txt"
+            cap_path = os.path.join(batch_process_folder, os.path.splitext(image_path)[0] + ".txt")
             if os.path.exists(cap_path):
                 with open(cap_path, 'r') as cf:
                     img_prompt = cf.read()
@@ -523,10 +530,10 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
         lq = lq / 255 * 2 - 1
         lq = torch.tensor(lq, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
 
-        counter = 1
+        
         _faces = []
         if not dont_update_progress and progress is not None:
-            progress(0 / num_images, desc="Generating images")
+            progress(counter / total_images, desc=f"Batch Upscaling Images {counter}/{total_images}")
         video_path = None
         
         # Only load face model if face restoration is enabled
@@ -634,17 +641,19 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                 results = [x_samples[i] for i in range(num_samples)]
 
             image_generation_time = time.time() - start_time
-            desc = f"Generated image {counter}/{num_images} in {image_generation_time:.2f} seconds"
+            desc = f"Image {counter}/{total_images} upscale completed. Last upscale completed in {image_generation_time:.2f} seconds"
             counter += 1
             if not dont_update_progress and progress is not None:
-                progress(counter / num_images, desc=desc)
+                progress(counter / total_images, desc=desc)
             print(desc)  # Print the progress
             start_time = time.time()  # Reset the start time for the next image
             all_results.extend(results)
+            number_of_images_results.extend(results)
         if len(inputs.keys()) == 1:
             # Prepend the first input image to all_results for slider
             all_results.insert(0, list(inputs.values())[0])
-        output_data[image_path] = all_results
+        output_data[image_path] = number_of_images_results
+        
         status_container.prompt = img_prompt
         status_container.result_gallery = all_results
         status_container.event_id = event_id
@@ -653,7 +662,11 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
         status_container.comparison_video = video_path
         status_container.output_data = output_data
         status_container.events_dict = event_data
-
+        output_data = {}
+        desc = f"Image {counter}/{total_images} upscale completed. Saving last generated images..."
+        process_outputs(outputs_folder, make_comparison_video, video_duration, video_fps,
+                    video_width, video_height)
+        number_of_images_results = []
         if args.log_history:
             os.makedirs(f'./history/{event_id[:5]}/{event_id[5:]}', exist_ok=True)
             with open(f'./history/{event_id[:5]}/{event_id[5:]}/logs.txt', 'w') as f:
@@ -674,7 +687,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
     if not batch_processing_val or unload:
         all_to_cpu()
 
-    return f"Stage 2 Processing Complete: Processed {num_images} images at {time.ctime()}."
+    return f"Stage 2 Processing Complete: Processed {total_images} images at {time.ctime()}."
 
 
 def process_outputs(output_dir, make_comparison_video, video_duration, video_fps, video_width, video_height):
@@ -696,10 +709,6 @@ def process_outputs(output_dir, make_comparison_video, video_duration, video_fps
     metadata_dir = os.path.join(output_dir, "images_meta_data")
     if not os.path.exists(metadata_dir):
         os.makedirs(metadata_dir)
-
-    compare_videos_dir = os.path.join(output_dir, "compare_videos")
-    if not os.path.exists(compare_videos_dir):
-        os.makedirs(compare_videos_dir)
 
     for image_path, results in results_dict.items():
         event_dict = events_dict.get(image_path, {})
@@ -738,6 +747,8 @@ def process_outputs(output_dir, make_comparison_video, video_duration, video_fps
                 status_container.comparison_video = video_path
                 create_comparison_video(org_image_absolute_path, full_save_image_path, video_path, video_duration, video_fps,
                                         video_width, video_height)
+    status_container.output_data = None
+    status_container.events_dict = None
 
 
 def start_batch_process(batch_process_folder, outputs_folder, main_prompt, a_prompt, n_prompt, num_samples, upscale,
@@ -781,7 +792,7 @@ def start_batch_process(batch_process_folder, outputs_folder, main_prompt, a_pro
                                   apply_face,
                                   face_prompt, batch_process_llava, temperature, top_p, qs, make_comparison_video,
                                   video_duration,
-                                  video_fps, video_width, video_height, progress=progress)
+                                  video_fps, video_width, video_height,batch_process_folder, progress=progress)
     except Exception as e:
         print(f"An exception occurred: {e} at {traceback.format_exc()}")
         batch_processing_val = False
@@ -795,7 +806,7 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
                   apply_face,
                   face_prompt,
                   batch_process_llava, temperature, top_p, qs, make_comparison_video, video_duration, video_fps,
-                  video_width, video_height, progress=gr.Progress()):
+                  video_width, video_height,batch_process_folder, progress=gr.Progress()):
     global batch_processing_val, llava_agent
     last_result = "Select something to do."
     if batch_processing_val:
@@ -812,6 +823,7 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
     if not batch_processing_val:
         return f"Batch Processing Complete: Cancelled at {time.ctime()}.", last_result
 
+    # batch process llava = apply llava
     if batch_process_llava:
         print('Processing LLaVA')
         last_result = llava_process(img_data, temperature, top_p, qs, unload=True, progress=progress)
@@ -829,12 +841,11 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
                                      ae_dtype,
                                      gamma_correction, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2,
                                      model_select,
-                                     ckpt_select, num_images, random_seed, apply_llava_checkbox, face_resolution,
+                                     ckpt_select, num_images, random_seed, batch_process_llava, face_resolution,
                                      apply_bg, apply_face,
-                                     face_prompt, dont_update_progress=True, unload=True, progress=progress)
+                                     face_prompt,outputs_folder,make_comparison_video,video_duration, video_fps,video_width,video_height,batch_process_folder,dont_update_progress=False, unload=True, progress=progress)
 
-    process_outputs(outputs_folder, make_comparison_video, video_duration, video_fps,
-                    video_width, video_height)
+
     batch_processing_val = False
     return f"Batch Processing Complete: processed {num_images} images at {time.ctime()}.", last_result
 
@@ -1107,7 +1118,7 @@ with block:
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
-    with gr.Tab("About_V28"):
+    with gr.Tab("About_V29"):
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
