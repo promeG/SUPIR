@@ -365,9 +365,9 @@ def llava_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], temp, p, q
             progress(step / total_steps, desc="Unloading LLaVA...")
             llava_agent = llava_agent.to('cpu')
             step += 1
-            progress(step / total_steps, desc="LLaVA processing complete.")
+            progress(step / total_steps, desc="LLaVA processing completed.")
         status_container.llava_captions = output_captions
-        return f"LLaVA Processing Complete: {len(inputs)} images processed at {time.ctime()}."
+        return f"LLaVA Processing Completed: {len(inputs)} images processed at {time.ctime()}."
     else:
         status_container.llava_caption = ""
         return f"LLaVA is not available at {time.ctime()}."
@@ -411,7 +411,7 @@ def stage1_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], gamma, mo
         all_to_cpu()
     status_container.result_gallery = all_results
     status_container.image_data = output_data
-    return f"Stage 1 Processing Complete: processed {len(inputs)} images at {time.ctime()}"
+    return f"Stage 1 Processing Completed: processed {len(inputs)} images at {time.ctime()}"
 
 
 # input_image, prompt, a_prompt, n_prompt, num_samples, upscale,
@@ -819,7 +819,7 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
         img_data = status_container.image_data
 
     if not batch_processing_val:
-        return f"Batch Processing Complete: Cancelled at {time.ctime()}.", last_result
+        return f"Batch Processing Completed: Cancelled at {time.ctime()}.", last_result
 
     # batch process llava = apply llava
     if batch_process_llava:
@@ -830,7 +830,7 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
         captions = [main_prompt] * total_images
 
     if not batch_processing_val:
-        return f"Batch Processing Complete: Cancelled at {time.ctime()}.", last_result
+        return f"Batch Processing Completed: Cancelled at {time.ctime()}.", last_result
 
     if apply_stage_2:
         print("Processing images (Stage 2)")
@@ -1117,7 +1117,7 @@ with block:
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
-    with gr.Tab("About_V32"):
+    with gr.Tab("About_V33"):
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
