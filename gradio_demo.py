@@ -150,14 +150,14 @@ def load_model(selected_model, selected_checkpoint, progress=None):
     if selected_model != model.current_model:
         config = OmegaConf.load('options/SUPIR_v0_tiled.yaml')
         device = 'cpu'
-        if model_select_radio == 'v0-Q':
+        if selected_model == 'v0-Q':
             print('load v0-Q')
             if progress is not None:
                 progress(1 / 2, desc="Updating SUPIR checkpoint...")
             ckpt_q = torch.load(config.SUPIR_CKPT_Q, map_location=device)
             model.load_state_dict(ckpt_q, strict=False)
             model.current_model = 'v0-Q'
-        elif model_select_radio == 'v0-F':
+        elif selected_model == 'v0-F':
             print('load v0-F')
             if progress is not None:
                 progress(1 / 2, desc="Updating SUPIR checkpoint...")
@@ -1124,7 +1124,7 @@ with block:
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
-    with gr.Tab("About_V35"):
+    with gr.Tab("About_V36"):
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
