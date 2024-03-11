@@ -265,7 +265,7 @@ def update_elements(status_label):
     face_gallery_el = gr.update()
     global single_process
 
-    if "Processing Complete" in status_label:
+    if "Completed" in status_label:
         print(status_label)
         if "LLaVA" in status_label:
             status_container.llava_caption = status_container.llava_captions[0]
