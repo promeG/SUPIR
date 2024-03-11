@@ -72,7 +72,7 @@ face_helper = None
 model: SUPIRModel = None
 llava_agent = None
 models_loaded = False
-
+unique_counter = 0
 status_container = StatusContainer()
 
 def refresh_models_click():
@@ -569,7 +569,10 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                            :]
                     faces.append(face)
                 counter=0
+                counter_faces=0
                 for face in faces:
+                    progress(counter_faces / len(faces), desc=f"Upscaling Face {counter_faces}/{len(faces)}")
+                    counter_faces=counter_faces+1
                     caption = face_captions[counter]
                     from torch.nn.functional import interpolate
                     face = interpolate(face, size=face_resolution, mode='bilinear', align_corners=False)
@@ -682,7 +685,9 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
     if not batch_processing_val or unload:
         all_to_cpu()
     main_end_time = time.time()
-    return f"Image Upscaling Completed: processed {total_images} images at in {main_end_time - main_begin_time:.2f} seconds"
+    global unique_counter
+    unique_counter = unique_counter+1
+    return f"Image Upscaling Completed: processed {total_images} images at in {main_end_time - main_begin_time:.2f} seconds #{unique_counter}"
 
 
 def process_outputs(output_dir, make_comparison_video, video_duration, video_fps, video_width, video_height):
@@ -846,7 +851,9 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
 
     batch_processing_val = False
     end_time = time.time()
-    return f"Batch Processing Completed: processed {total_images*num_images} images at in {end_time - start_time:.2f} seconds", last_result
+    global unique_counter
+    unique_counter = unique_counter+1
+    return f"Batch Processing Completed: processed {total_images*num_images} images at in {end_time - start_time:.2f} seconds #{unique_counter}", last_result
 
 
 def stop_batch_upscale(progress=gr.Progress()):
@@ -1117,7 +1124,7 @@ with block:
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
-    with gr.Tab("About_V34"):
+    with gr.Tab("About_V35"):
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
