@@ -1024,7 +1024,7 @@ with block:
                         with gr.Column():
                             random_seed_checkbox = gr.Checkbox(label="Randomize Seed", value=True)
                     with gr.Row():
-                        edm_steps_slider = gr.Slider(label="Steps", minimum=20, maximum=200, value=50, step=1)
+                        edm_steps_slider = gr.Slider(label="Steps", minimum=1, maximum=200, value=50, step=1)
                         s_cfg_slider = gr.Slider(label="Text Guidance Scale", minimum=1.0, maximum=15.0, value=7.5,
                                                  step=0.1)
                         s_stage2_slider = gr.Slider(label="Stage2 Guidance Strength", minimum=0., maximum=1., value=1.,
