@@ -176,7 +176,7 @@ def load_llava():
     global llava_agent
     if llava_agent is None and use_llava:
         llava_path = get_model('liuhaotian/llava-v1.5-7b')
-        llava_agent = LLavaAgent(llava_path, device='cuda', load_8bit=args.load_8bit_llava, load_4bit=args.load_4bit_llava)
+        llava_agent = LLavaAgent(llava_path, device=LLaVA_device, load_8bit=args.load_8bit_llava, load_4bit=args.load_4bit_llava)
 
 def clear_llava():
     global llava_agent
@@ -291,6 +291,12 @@ def update_elements(status_label):
         elif single_process:
             print("Updating Single Output Image")
             # Update the slider with the outputs, hide the gallery
+            try:
+                status_container.llava_caption = status_container.llava_captions[0]
+                if len (status_container.llava_caption ) > 2:
+                    prompt_el = gr.update(value=status_container.llava_caption)
+            except:
+                ""
             result_slider_el = gr.update(value=status_container.result_gallery, visible=True)
             slider_full_btn_el = gr.update(visible=True)
             result_gallery_el = gr.update(visible=False)
@@ -1139,7 +1145,7 @@ with block:
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
-    with gr.Tab("About_V37"):
+    with gr.Tab("About_V38"):
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
