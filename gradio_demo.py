@@ -34,8 +34,8 @@ parser.add_argument("--port", type=int)
 parser.add_argument("--no_llava", action='store_true', default=False)
 parser.add_argument("--use_image_slider", action='store_true', default=False)
 parser.add_argument("--log_history", action='store_true', default=False)
-parser.add_argument("--loading_half_params", action='store_true', default=True)
-parser.add_argument("--use_tile_vae", action='store_true', default=True)
+parser.add_argument("--loading_half_params", action='store_true', default=False)
+parser.add_argument("--use_tile_vae", action='store_true', default=False)
 parser.add_argument("--encoder_tile_size", type=int, default=512)
 parser.add_argument("--decoder_tile_size", type=int, default=64)
 parser.add_argument("--load_8bit_llava", action='store_true', default=False)
@@ -568,9 +568,9 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                            :,
                            :]
                     faces.append(face)
-
-                for face, caption in zip(faces, face_captions):
-
+                counter=0
+                for face in faces:
+                    caption = face_captions[counter]
                     from torch.nn.functional import interpolate
                     face = interpolate(face, size=face_resolution, mode='bilinear', align_corners=False)
                     if face_resolution < 1024:
@@ -1117,7 +1117,7 @@ with block:
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
-    with gr.Tab("About_V33"):
+    with gr.Tab("About_V34"):
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
