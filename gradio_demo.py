@@ -326,7 +326,6 @@ def update_elements(status_label):
     prompt_el = gr.update()
     result_gallery_el = gr.update(height=400)
     result_slider_el = gr.update(height=400)
-    slider_full_btn_el = gr.update()
     comparison_video_el = gr.update(height=400)
     event_id_el = gr.update()
     fb_score_el = gr.update()
@@ -334,7 +333,8 @@ def update_elements(status_label):
     seed_el = gr.update()
     face_gallery_el = gr.update()
     global single_process
-
+    slider_class = ["preview_box", "preview_slider"]
+    gallery_class = ["preview_box"]
     if "Completed" in status_label:
         print(status_label)
         if "LLaVA" in status_label:
@@ -342,14 +342,10 @@ def update_elements(status_label):
             prompt_el = gr.update(value=status_container.llava_caption)
             print(f"LLaVA caption: {status_container.llava_caption}")
             # Hide gallery, show empty slider
-            result_gallery_el = gr.update(visible=False)
-            slider_full_btn_el = gr.update(visible=True)
-            result_slider_el = gr.update(visible=True, value=None)
         if "Stage 1" in status_label:
             print("Updating stage 1 output image")
-            result_slider_el = gr.update(value=status_container.result_gallery, visible=True)
-            slider_full_btn_el = gr.update(visible=True)
-            result_gallery_el = gr.update(visible=False)
+            result_slider_el = gr.update(value=status_container.result_gallery, visible=True, elem_class=["active", "preview_slider", "preview_box"])
+            result_gallery_el = gr.update(visible=False, value=None, elem_class=["preview_box"])
         elif single_process:
             print("Updating Single Output Image")
             # Update the slider with the outputs, hide the gallery
@@ -358,10 +354,9 @@ def update_elements(status_label):
                 if len(status_container.llava_caption) > 2:
                     prompt_el = gr.update(value=status_container.llava_caption)
             except:
-                ""
-            result_slider_el = gr.update(value=status_container.result_gallery, visible=True)
-            slider_full_btn_el = gr.update(visible=True)
-            result_gallery_el = gr.update(visible=False)
+                pass
+            result_slider_el = gr.update(value=status_container.result_gallery, visible=True, elem_class=["active", "preview_slider", "preview_box"])
+            result_gallery_el = gr.update(visible=False, value=None, elem_class=["preview_box"])
             event_id_el = gr.update(value=status_container.event_id)
             fb_score_el = gr.update(value=status_container.fb_score)
             fb_text_el = gr.update(value=status_container.fb_text)
@@ -370,16 +365,15 @@ def update_elements(status_label):
             comparison_video_el = gr.update(value=status_container.comparison_video)
         else:
             print("Updating Batch Outputs")
-            result_gallery_el = gr.update(value=status_container.result_gallery, visible=True)
-            result_slider_el = gr.update(visible=False)
-            slider_full_btn_el = gr.update(visible=False)
+            result_gallery_el = gr.update(value=status_container.result_gallery, visible=True, elem_class=["active", "preview_box"])
+            result_slider_el = gr.update(visible=False, value=None, elem_class=["preview_slider", "preview_box"])
             event_id_el = gr.update(value=status_container.event_id)
             fb_score_el = gr.update(value=status_container.fb_score)
             fb_text_el = gr.update(value=status_container.fb_text)
             seed_el = gr.update(value=status_container.seed)
             face_gallery_el = gr.update(value=status_container.face_gallery)
             comparison_video_el = gr.update(value=status_container.comparison_video)
-    return (prompt_el, result_gallery_el, result_slider_el, slider_full_btn_el, event_id_el, fb_score_el,
+    return (prompt_el, result_gallery_el, result_slider_el, event_id_el, fb_score_el,
             fb_text_el, seed_el, face_gallery_el, comparison_video_el)
 
 
@@ -401,7 +395,26 @@ def populate_slider_single():
         img.save(temp_path.name)
         img = img.resize(resized_dims)
         img.save(lowres_path)
-    return gr.update(value=[lowres_path, temp_path.name], visible=True)
+    return (gr.update(value=[lowres_path, temp_path.name], visible=True, elem_classes=["active", "preview_slider", "preview_box"]),
+            gr.update(visible=False, value=None, elem_classes=["preview_box"]))
+
+
+def populate_gallery():
+    # Fetch the image at http://www.marketingtool.online/en/face-generator/img/faces/avatar-1151ce9f4b2043de0d2e3b7826127998.jpg
+    # and use it as the input image
+    temp_path = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+    temp_path.write(requests.get(
+        "http://www.marketingtool.online/en/face-generator/img/faces/avatar-1151ce9f4b2043de0d2e3b7826127998.jpg").content)
+    temp_path.close()
+    lowres_path = temp_path.name.replace('.jpg', '_lowres.jpg')
+    with Image.open(temp_path.name) as img:
+        current_dims = (img.size[0] // 2, img.size[1] // 2)
+        resized_dims = (img.size[0] // 4, img.size[1] // 4)
+        img = img.resize(current_dims)
+        img.save(temp_path.name)
+        img = img.resize(resized_dims)
+        img.save(lowres_path)
+    return gr.update(value=[lowres_path, temp_path.name], visible=True, elem_classes=["preview_box", "active"]), gr.update(visible=False, value=None, elem_classes=["preview_slider", "preview_box"])
 
 
 def llava_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], temp, p, question=None, unload=True,
@@ -994,19 +1007,21 @@ def submit_feedback(evt_id, f_score, f_text):
         return 'Submit failed, the server is not set to log history.'
 
 
-slider_full = False
+preview_full = False
 
 
-def toggle_full_slider():
-    global slider_full
-    if slider_full:
-        slider_full = False
-        return gr.update(elem_classes=["preview_box", "preview_slider"], visible=True), gr.update(
-            elem_classes=["slider_button"], visible=True)
+def toggle_full_preview():
+    global preview_full
+    gal_classes = ["preview_col"]
+    btn_classes = ["slider_button"]
+
+    if preview_full:
+        preview_full = False
     else:
-        slider_full = True
-        return gr.update(elem_classes=["preview_box", "preview_slider", "full_slider"], visible=True), gr.update(
-            elem_classes=["slider_button", "full"], visible=True)
+        preview_full = True
+        gal_classes.append("full_preview")
+        btn_classes.append("full")
+    return gr.update(elem_classes=gal_classes), gr.update(elem_classes=btn_classes), gr.update(elem_classes=btn_classes)
 
 
 def toggle_compare_elements(enable: bool) -> Tuple[gr.update, gr.update]:
@@ -1043,17 +1058,17 @@ head = f"""
 <script type="text/javascript">{js}</script>
 """
 
+refresh_symbol = "\U000027F3"  # ⟳
+dl_symbol = "\U00002B73"  # ⭳
+fullscreen_symbol = "\U000026F6"  # ⛶
+
 block = gr.Blocks(title='SUPIR', theme=args.theme, css=css_file, head=head).queue()
-refresh_symbol = "\U000027F3" # ⟳
 
 with block:
     with gr.Tab("Main Upscale"):
         # Execution buttons
         with gr.Column(scale=1):
             with gr.Row():
-                # llava_button = gr.Button(value="LlaVa Run")
-                # stage_1_button = gr.Button(value="Stage1 Run")
-                # stage_2_button = gr.Button(value="Stage2 Run")
                 start_single_button = gr.Button(value="Process Single Image")
                 start_batch_button = gr.Button(value="Process Batch")
                 stop_batch_button = gr.Button(value="Cancel")
@@ -1067,14 +1082,12 @@ with block:
             with gr.Column(visible=False, elem_classes=['preview_col']) as comparison_video_col:
                 comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"], height=400,
                                             visible=False)
-            with gr.Column(elem_classes=['preview_col']) as result_col:
+            with gr.Column(elem_classes=['preview_col'], elem_id="preview_column") as result_col:
                 result_gallery = gr.Gallery(label='Output', elem_id="gallery2", elem_classes=["preview_box"],
-                                            height=400, visible=False, columns=4)
+                                            height=400, visible=False, rows=2, columns=4, allow_preview=True, show_download_button=False, show_share_button=False)
                 result_slider = ImageSlider(label='Output', interactive=False, show_download_button=True,
-                                            elem_id="gallery1", elem_classes=["preview_box", "preview_slider"],
+                                            elem_id="gallery1", elem_classes=["preview_box", "preview_slider", "active"],
                                             height=400, container=True)
-                dl_symbol = "\U00002B73"  # ⭳
-                fullscreen_symbol = "\U000026F6"  # ⛶
                 slider_dl_button = gr.Button(value=dl_symbol, elem_classes=["slider_button"], visible=True,
                                              elem_id="download_button")
                 slider_full_button = gr.Button(value=fullscreen_symbol, elem_classes=["slider_button"], visible=True,
@@ -1087,9 +1100,12 @@ with block:
                     btn_open_outputs.click(fn=open_folder)
 
                     if args.debug:
-                        populate_slider = gr.Button(value="Populate Slider")
-                        populate_slider.click(fn=populate_slider_single, outputs=[result_slider],
-                                              show_progress=True, queue=True)
+                        populate_slider_button = gr.Button(value="Populate Slider")
+                        populate_gallery_button = gr.Button(value="Populate Gallery")
+                        populate_slider_button.click(fn=populate_slider_single, outputs=[result_slider, result_gallery],
+                                                     show_progress=True, queue=True)
+                        populate_gallery_button.click(fn=populate_gallery, outputs=[result_gallery, result_slider],
+                                                      show_progress=True, queue=True)
                     with gr.Row():
                         apply_stage_1_checkbox = gr.Checkbox(label="Apply Stage 1", value=False)
                         apply_llava_checkbox = gr.Checkbox(label="Apply LLaVa", value=False)
@@ -1099,7 +1115,8 @@ with block:
                         ckpt_select_dropdown = gr.Dropdown(label="Model", choices=list_models(),
                                                            value=selected_model(),
                                                            interactive=True)
-                        refresh_models_button = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"], size="sm")
+                        refresh_models_button = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"],
+                                                          size="sm")
 
                     upscale_slider = gr.Slider(label="Upscale Size (Stage 2)", minimum=1, maximum=8, value=1, step=0.1)
                     prompt_textbox = gr.Textbox(label="Prompt", value="")
@@ -1141,9 +1158,11 @@ with block:
                                                             choices=prompt_styles_keys,
                                                             value=prompt_styles_keys[0] if len(
                                                                 prompt_styles_keys) > 0 else "")
-                        refresh_styles_button = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"], size="sm")
+                        refresh_styles_button = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"],
+                                                          size="sm")
                     with gr.Row():
-                        selected_pos, selected_neg = select_style(prompt_styles_keys[0] if len(prompt_styles_keys) > 0 else "")
+                        selected_pos, selected_neg = select_style(
+                            prompt_styles_keys[0] if len(prompt_styles_keys) > 0 else "", True)
                         a_prompt_textbox = gr.Textbox(label="Default Positive Prompt",
                                                       value=selected_pos)
                         n_prompt_textbox = gr.Textbox(label="Default Negative Prompt",
@@ -1282,8 +1301,7 @@ with block:
     ]
 
     output_elements = [
-        prompt_textbox, result_gallery, result_slider, slider_full_button, event_id,
-        fb_score, fb_text, seed_slider, face_gallery, comparison_video
+        prompt_textbox, result_gallery, result_slider, event_id, fb_score, fb_text, seed_slider, face_gallery, comparison_video
     ]
 
     refresh_models_button.click(fn=refresh_models_click, outputs=[ckpt_select_dropdown])
@@ -1304,7 +1322,8 @@ with block:
     output_label.change(fn=update_elements, show_progress=False, queue=True, inputs=[output_label],
                         outputs=output_elements)
 
-    prompt_style_dropdown.change(fn=select_style, inputs=[prompt_style_dropdown], outputs=[a_prompt_textbox, n_prompt_textbox])
+    prompt_style_dropdown.change(fn=select_style, inputs=[prompt_style_dropdown],
+                                 outputs=[a_prompt_textbox, n_prompt_textbox])
 
     make_comparison_video_checkbox.change(fn=toggle_compare_elements, inputs=[make_comparison_video_checkbox],
                                           outputs=[comparison_video_col, compare_video_row, comparison_video])
@@ -1315,10 +1334,15 @@ with block:
                           outputs=[target_res_textbox])
 
     # slider_dl_button.click(fn=download_slider_image, inputs=[result_slider], show_progress=False, queue=True)
-    slider_full_button.click(fn=toggle_full_slider, outputs=[result_slider, slider_full_button],
+    slider_full_button.click(fn=toggle_full_preview, outputs=[result_col, slider_full_button, slider_dl_button],
                              show_progress=False, queue=True, js="toggleFullscreen")
 
-    slider_dl_button.click(js="downloadImage", inputs=[result_slider], show_progress=False, queue=True)
+
+    def do_nothing():
+        pass
+
+
+    slider_dl_button.click(js="downloadImage", show_progress=False, queue=True, fn=do_nothing)
 
 if args.port is not None:  # Check if the --port argument is provided
     block.launch(server_name=server_ip, server_port=args.port, share=args.share, inbrowser=args.open_browser)
