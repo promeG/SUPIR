@@ -34,8 +34,8 @@ parser.add_argument("--port", type=int)
 parser.add_argument("--no_llava", action='store_true', default=False)
 parser.add_argument("--use_image_slider", action='store_true', default=False)
 parser.add_argument("--log_history", action='store_true', default=False)
-parser.add_argument("--loading_half_params", action='store_true', default=True)
-parser.add_argument("--use_tile_vae", action='store_true', default=True)
+parser.add_argument("--loading_half_params", action='store_true', default=False)
+parser.add_argument("--use_tile_vae", action='store_true', default=False)
 parser.add_argument("--encoder_tile_size", type=int, default=512)
 parser.add_argument("--decoder_tile_size", type=int, default=64)
 parser.add_argument("--load_8bit_llava", action='store_true', default=False)
@@ -263,6 +263,7 @@ def update_elements(status_label):
     fb_text_el = gr.update()
     seed_el = gr.update()
     face_gallery_el = gr.update()
+    global single_process
 
     if "Processing Complete" in status_label:
         print(status_label)
@@ -285,8 +286,8 @@ def update_elements(status_label):
             result_slider_el = gr.update(value=[src_image, out_image], visible=True)
             slider_full_btn_el = gr.update(visible=True)
             result_gallery_el = gr.update(visible=False)
-        elif "Stage 2" in status_label:
-            print("Updating stage 2 output image")
+        elif single_process:
+            print("Updating Single Output Image")
             # Update the slider with the outputs, hide the gallery
             result_slider_el = gr.update(value=status_container.result_gallery, visible=True)
             slider_full_btn_el = gr.update(visible=True)
@@ -297,8 +298,8 @@ def update_elements(status_label):
             seed_el = gr.update(value=status_container.seed)
             face_gallery_el = gr.update(value=status_container.face_gallery)
             comparison_video_el = gr.update(value=status_container.comparison_video)
-        elif "Batch" in status_label:
-            print("Updating batch outputs")
+        else:
+            print("Updating Batch Outputs")
             result_gallery_el = gr.update(value=status_container.result_gallery, visible=True)
             result_slider_el = gr.update(visible=False)
             slider_full_btn_el = gr.update(visible=False)
@@ -419,6 +420,9 @@ def stage1_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], gamma, mo
 #                   ckpt_select, num_images, random_seed, apply_stage_1, apply_stage_2, face_resolution, apply_bg,
 #                   apply_face, face_prompt, apply_llava, temperature, top_p, qs, make_comparison_video, video_duration,
 #                   video_fps, video_width, video_height
+
+single_process = False
+
 def start_single_process(input_image, prompt, a_prompt, n_prompt, num_samples, upscale,
                          edm_steps, s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype,
                          ae_dtype,
@@ -430,7 +434,6 @@ def start_single_process(input_image, prompt, a_prompt, n_prompt, num_samples, u
                          video_fps, video_width, video_height, progress=gr.Progress()):
     global status_container, batch_processing_val
     status_container = StatusContainer()
-
     if input_image is None:
         return "No input image provided."
 
@@ -444,7 +447,8 @@ def start_single_process(input_image, prompt, a_prompt, n_prompt, num_samples, u
             img_data[file] = np.array(img)
         except:
             pass
-
+    global single_process
+    single_process = True
     # Store it globally
     #status_container.image_data = img_data
     result = "An exception occurred. Please try again."
@@ -473,7 +477,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                    face_prompt,outputs_folder, make_comparison_video, video_duration, video_fps,
                     video_width, video_height, batch_process_folder,dont_update_progress=False, unload=True, progress=gr.Progress()):
     global model, status_container, event_id
-
+    main_begin_time = time.time()
     load_model(model_select, ckpt_select, progress)
     to_gpu(model, SUPIR_device)
     model.ae_dtype = convert_dtype(ae_dtype)
@@ -524,7 +528,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
         
         _faces = []
         if not dont_update_progress and progress is not None:
-            progress(counter / total_images, desc=f"Batch Upscaling Images {counter}/{total_images}")
+            progress(counter / total_images, desc=f"Upscaling Images {counter}/{total_images}")
         video_path = None
         
         # Only load face model if face restoration is enabled
@@ -677,8 +681,8 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
 
     if not batch_processing_val or unload:
         all_to_cpu()
-
-    return f"Stage 2 Processing Complete: Processed {total_images} images at {time.ctime()}."
+    main_end_time = time.time()
+    return f"Image Upscaling Completed: processed {total_images} images at in {main_end_time - main_begin_time:.2f} seconds"
 
 
 def process_outputs(output_dir, make_comparison_video, video_duration, video_fps, video_width, video_height):
@@ -753,6 +757,8 @@ def start_batch_process(batch_process_folder, outputs_folder, main_prompt, a_pro
                         video_width, video_height, progress=gr.Progress()):
     global status_container, batch_processing_val
     status_container = StatusContainer()
+    global single_process
+    single_process = False
     if not batch_process_folder:
         return "No input folder provided."
     if not os.path.exists(batch_process_folder):
@@ -799,6 +805,7 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
                   batch_process_llava, temperature, top_p, qs, make_comparison_video, video_duration, video_fps,
                   video_width, video_height,batch_process_folder, progress=gr.Progress()):
     global batch_processing_val, llava_agent
+    start_time = time.time()
     last_result = "Select something to do."
     if batch_processing_val:
         print("Batch processing already in progress.")
@@ -838,7 +845,8 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
 
 
     batch_processing_val = False
-    return f"Batch Processing Complete: processed {num_images} images at {time.ctime()}.", last_result
+    end_time = time.time()
+    return f"Batch Processing Completed: processed {total_images*num_images} images at in {end_time - start_time:.2f} seconds", last_result
 
 
 def stop_batch_upscale(progress=gr.Progress()):
@@ -1109,7 +1117,7 @@ with block:
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
-    with gr.Tab("About_V31"):
+    with gr.Tab("About_V32"):
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
