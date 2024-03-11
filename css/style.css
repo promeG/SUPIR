@@ -10,6 +10,24 @@
     font-size: 20px;
 }
 
+.refresh_button {
+    width: 25px;
+    height: 25px;
+    max-width: 25px;
+    max-height: 25px;
+    min-width: 25px;
+    min-height: 25px;
+    border-radius: 50%;
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    padding: 0;
+}
+
+#style_select_row, #model_select_row {
+    position: relative;
+}
+
 .progress_label .output-class {
     font-size: 20px;
     margin: 0;
