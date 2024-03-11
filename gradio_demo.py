@@ -113,16 +113,16 @@ def list_models():
     model_dir = args.ckpt_dir
     output = []
     if os.path.exists(model_dir):
-        output = [f for f in os.listdir(model_dir) if f.endswith('.safetensors') or f.endswith('.ckpt')]
+        output = [os.path.join(model_dir, f) for f in os.listdir(model_dir) if f.endswith('.safetensors') or f.endswith('.ckpt')]
     else:
         local_model_dir = os.path.join(os.path.dirname(__file__), args.ckpt_dir)
         if os.path.exists(local_model_dir):
-            output = [f for f in os.listdir(local_model_dir) if f.endswith('.safetensors') or f.endswith('.ckpt')]
+            output = [os.path.join(local_model_dir, f) for f in os.listdir(local_model_dir) if f.endswith('.safetensors') or f.endswith('.ckpt')]
     if os.path.exists(args.ckpt) and args.ckpt not in output:
         output.append(args.ckpt)
     else:
         if os.path.exists(os.path.join(os.path.dirname(__file__), args.ckpt)):
-            output.append(args.ckpt)
+            output.append(os.path.join(os.path.dirname(__file__), args.ckpt))
     # Sort the models
     output.sort()
     return output
@@ -916,19 +916,14 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
     batch_processing_val = True
     # Get the list of image files in the folder
     total_images = len(img_data.keys())
-    org_img_data = copy.deepcopy(img_data)
 
     if not batch_processing_val:
         return f"Batch Processing Completed: Cancelled at {time.ctime()}.", last_result
 
-    # batch process llava = apply llava
+    # DO THIS FIRST SO WE DON'T LOAD LLAVA AND SUPIR AT THE SAME TIME
+    # Also, don't do it only if stage 1 is applied.
     if batch_process_llava:
         print('Processing LLaVA')
-        if apply_stage_1:
-            print("Processing images (Stage 1)")
-            last_result = stage1_process(img_data, gamma_correction, model_select, ckpt_select, unload=False,
-                                         progress=progress)
-            img_data = status_container.image_data
         last_result = llava_process(img_data, temperature, top_p, qs, unload=True, progress=progress)
         captions = status_container.llava_captions
         if auto_deload_llava:
@@ -936,9 +931,20 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
     else:
         captions = [main_prompt] * total_images
 
+    # NOW perform stage 1, and set unload appropriately if doing stage 2
+    do_unload = not apply_stage_2
+    if apply_stage_1:
+        print("Processing images (Stage 1)")
+        last_result = stage1_process(img_data, gamma_correction, model_select, ckpt_select, unload=do_unload,
+                                     progress=progress)
+        img_data = status_container.image_data
+
     if not batch_processing_val:
         return f"Batch Processing Completed: Cancelled at {time.ctime()}.", last_result
-    img_data = copy.deepcopy(org_img_data)
+    # NO, because now we're never going to use the output of the original image data
+    #img_data = copy.deepcopy(org_img_data)
+
+    # Img data is pulled automatically from the status_container, or should be...
     if apply_stage_2:
         print("Processing images (Stage 2)")
         last_result = stage2_process(img_data, captions, a_prompt, n_prompt, num_samples, upscale, edm_steps,
