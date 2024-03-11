@@ -34,8 +34,8 @@ parser.add_argument("--port", type=int)
 parser.add_argument("--no_llava", action='store_true', default=False)
 parser.add_argument("--use_image_slider", action='store_true', default=False)
 parser.add_argument("--log_history", action='store_true', default=False)
-parser.add_argument("--loading_half_params", action='store_true', default=False)
-parser.add_argument("--use_tile_vae", action='store_true', default=False)
+parser.add_argument("--loading_half_params", action='store_true', default=True)
+parser.add_argument("--use_tile_vae", action='store_true', default=True)
 parser.add_argument("--encoder_tile_size", type=int, default=512)
 parser.add_argument("--decoder_tile_size", type=int, default=64)
 parser.add_argument("--load_8bit_llava", action='store_true', default=False)
@@ -682,7 +682,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
     if not batch_processing_val or unload:
         all_to_cpu()
     main_end_time = time.time()
-    return f"Image Upscaling Completed: processed {total_images} images at in {main_end_time - main_begin_time:.2f} seconds"
+    return f"Image Upscaling Completed: processed {total_images} images at in {main_end_time - main_begin_time:.2f} seconds", last_result
 
 
 def process_outputs(output_dir, make_comparison_video, video_duration, video_fps, video_width, video_height):
