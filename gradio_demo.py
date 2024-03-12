@@ -345,8 +345,8 @@ def update_elements(status_label):
         if "Stage 1" in status_label:
             print("Updating stage 1 output image")
             result_slider_el = gr.update(value=status_container.result_gallery, visible=True,
-                                         elem_class=["active", "preview_slider", "preview_box"])
-            result_gallery_el = gr.update(visible=False, value=None, elem_class=["preview_box"])
+                                         elem_classes=["active", "preview_slider", "preview_box"])
+            result_gallery_el = gr.update(visible=False, value=None, elem_classes=["preview_box"])
         elif single_process:
             print("Updating Single Output Image")
             # Update the slider with the outputs, hide the gallery
@@ -357,8 +357,8 @@ def update_elements(status_label):
             except:
                 pass
             result_slider_el = gr.update(value=status_container.result_gallery, visible=True,
-                                         elem_class=["active", "preview_slider", "preview_box"])
-            result_gallery_el = gr.update(visible=False, value=None, elem_class=["preview_box"])
+                                         elem_classes=["active", "preview_slider", "preview_box"])
+            result_gallery_el = gr.update(visible=False, value=None, elem_classes=["preview_box"])
             event_id_el = gr.update(value=status_container.event_id)
             fb_score_el = gr.update(value=status_container.fb_score)
             fb_text_el = gr.update(value=status_container.fb_text)
@@ -368,8 +368,8 @@ def update_elements(status_label):
         else:
             print("Updating Batch Outputs")
             result_gallery_el = gr.update(value=status_container.result_gallery, visible=True,
-                                          elem_class=["active", "preview_box"])
-            result_slider_el = gr.update(visible=False, value=None, elem_class=["preview_slider", "preview_box"])
+                                          elem_classes=["active", "preview_box"])
+            result_slider_el = gr.update(visible=False, value=None, elem_classes=["preview_slider", "preview_box"])
             event_id_el = gr.update(value=status_container.event_id)
             fb_score_el = gr.update(value=status_container.fb_score)
             fb_text_el = gr.update(value=status_container.fb_text)
