@@ -1181,7 +1181,7 @@ with block:
                                                      value="")
 
                 with gr.Accordion("Stage1 options", open=False):
-                    gamma_correction_slider = gr.Slider(label="Gamma Correction", minimum=0.1, maximum=2.0, value=1.0,
+                    gamma_correction_slider = gr.Slider(label="Gamma Correction", minimum=0.1, maximum=2.0, value=0.1,
                                                         step=0.1)
                 with gr.Accordion("Stage2 options", open=False):
                     with gr.Row():
