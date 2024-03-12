@@ -496,61 +496,6 @@ def llava_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], temp, p, q
     return f"LLaVA Processing Completed: {len(inputs)} images processed at {time.ctime()}."
 
 
-def stage1_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], gamma, model_select, ckpt_select, unload=True,
-                   progress=None) -> str:
-    global model
-    global status_container
-    output_data = {}
-    total_steps = len(inputs.keys()) + (1 if unload else 0)
-    step = 0
-    main_begin_time = time.time()
-    load_model(model_select, ckpt_select, progress=progress)
-    model = to_gpu(model, SUPIR_device)
-    all_results = []
-    for image_path, img in inputs.items():
-        step += 1
-        if progress is not None:
-            progress(step / total_steps, desc=f"Processing image {step}/{len(inputs)}...")
-        lq = HWC3(img)
-        lq = fix_resize(lq, 512)
-        # stage1
-        lq = np.array(lq) / 255 * 2 - 1
-        lq = torch.tensor(lq, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
-        lq = model.batchify_denoise(lq, is_stage1=True)
-        lq = (lq[0].permute(1, 2, 0) * 127.5 + 127.5).cpu().numpy().round().clip(0, 255).astype(np.uint8)
-        # gamma correction
-        lq = lq / 255.0
-        lq = np.power(lq, gamma)
-        lq *= 255.0
-        lq = lq.round().clip(0, 255).astype(np.uint8)
-        status_container.stage_1_output_image = lq
-        output_data[image_path] = lq
-        all_results.append(lq)
-        if not batch_processing_val:  # Check if batch processing has been stopped
-            break
-    if unload:
-        step += 1
-        if progress is not None:
-            progress(step / total_steps, desc="Unloading models...")
-        all_to_cpu()
-    if len(inputs.keys()) == 1:
-        # Prepend the first input image to all_results for slider
-        all_results.insert(0, list(inputs.values())[0])
-    status_container.result_gallery = all_results
-    status_container.image_data = output_data
-    main_end_time = time.time()
-    global unique_counter
-    unique_counter = unique_counter + 1
-    return f"Stage 1 Processing Completed: processed {len(inputs)} images at in {main_end_time - main_begin_time:.2f} seconds #{unique_counter}"
-
-
-# input_image, prompt, a_prompt, n_prompt, num_samples, upscale,
-#                   edm_steps, s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
-#                   gamma_correction, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,
-#                   ckpt_select, num_images, random_seed, apply_stage_1, apply_stage_2, face_resolution, apply_bg,
-#                   apply_face, face_prompt, apply_llava, temperature, top_p, qs, make_comparison_video, video_duration,
-#                   video_fps, video_width, video_height
-
 single_process = False
 
 
@@ -601,6 +546,54 @@ def start_single_process(input_image, prompt, a_prompt, n_prompt, num_samples, u
         print(f"An exception occurred: {e} at {traceback.format_exc()}")
         batch_processing_val = False
     return result
+
+
+def stage1_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], gamma, model_select, ckpt_select, unload=True,
+                   progress=None) -> str:
+    global model
+    global status_container
+    output_data = {}
+    total_steps = len(inputs.keys()) + (1 if unload else 0)
+    step = 0
+    main_begin_time = time.time()
+    load_model(model_select, ckpt_select, progress=progress)
+    model = to_gpu(model, SUPIR_device)
+    all_results = []
+    for image_path, img in inputs.items():
+        step += 1
+        if progress is not None:
+            progress(step / total_steps, desc=f"Processing image {step}/{len(inputs)}...")
+        lq = HWC3(img)
+        lq = fix_resize(lq, 512)
+        # stage1
+        lq = np.array(lq) / 255 * 2 - 1
+        lq = torch.tensor(lq, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
+        lq = model.batchify_denoise(lq, is_stage1=True)
+        lq = (lq[0].permute(1, 2, 0) * 127.5 + 127.5).cpu().numpy().round().clip(0, 255).astype(np.uint8)
+        # gamma correction
+        lq = lq / 255.0
+        lq = np.power(lq, gamma)
+        lq *= 255.0
+        lq = lq.round().clip(0, 255).astype(np.uint8)
+        status_container.stage_1_output_image = lq
+        output_data[image_path] = lq
+        all_results.append(lq)
+        if not batch_processing_val:  # Check if batch processing has been stopped
+            break
+    if unload:
+        step += 1
+        if progress is not None:
+            progress(step / total_steps, desc="Unloading models...")
+        all_to_cpu()
+    if len(inputs.keys()) == 1:
+        # Prepend the first input image to all_results for slider
+        all_results.insert(0, list(inputs.values())[0])
+    status_container.result_gallery = all_results
+    status_container.image_data = output_data
+    main_end_time = time.time()
+    global unique_counter
+    unique_counter = unique_counter + 1
+    return f"Stage 1 Processing Completed: processed {len(inputs)} images at in {main_end_time - main_begin_time:.2f} seconds #{unique_counter}"
 
 
 def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions, a_prompt, n_prompt, num_samples,
@@ -825,6 +818,79 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
     return f"Image Upscaling Completed: processed {total_images} images at in {main_end_time - main_begin_time:.2f} seconds #{unique_counter}"
 
 
+def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num_samples, upscale,
+                  edm_steps, s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
+                  gamma_correction, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,
+                  ckpt_select, num_images, random_seed, apply_stage_1, apply_stage_2, face_resolution, apply_bg,
+                  apply_face,
+                  face_prompt,
+                  batch_process_llava, auto_deload_llava, temperature, top_p, qs, make_comparison_video, video_duration,
+                  video_fps,
+                  video_width, video_height, batch_process_folder, progress=gr.Progress()):
+    global batch_processing_val, llava_agent
+    ckpt_select = get_ckpt_path(ckpt_select)
+    if not ckpt_select:
+        return "No checkpoint selected. Please select a checkpoint to continue."
+    start_time = time.time()
+    last_result = "Select something to do."
+    if batch_processing_val:
+        print("Batch processing already in progress.")
+        return "Batch processing already in progress.", "Batch processing already in progress."
+    batch_processing_val = True
+    # Get the list of image files in the folder
+    total_images = len(img_data.keys())
+    global model
+    if not batch_processing_val:
+        return f"Batch Processing Completed: Cancelled at {time.ctime()}.", last_result
+
+    # DO THIS FIRST SO WE DON'T LOAD LLAVA AND SUPIR AT THE SAME TIME
+    # Also, don't do it only if stage 1 is applied.
+    if batch_process_llava:
+        print('Processing LLaVA')
+        last_result = llava_process(img_data, temperature, top_p, qs, unload=True, progress=progress)
+        captions = status_container.llava_captions
+        if auto_deload_llava:
+            print("Clearing LLaVA...")
+            clear_llava()
+    else:
+        captions = [main_prompt] * total_images
+
+    # NOW perform stage 1, and set unload appropriately if doing stage 2
+    do_unload = not apply_stage_2
+    if apply_stage_1:
+        print("Processing images (Stage 1)")
+        last_result = stage1_process(img_data, gamma_correction, model_select, ckpt_select, unload=do_unload,
+                                     progress=progress)
+        img_data = status_container.image_data
+
+    if not batch_processing_val:
+        model = model.to('cpu')
+        return f"Batch Processing Completed: Cancelled at {time.ctime()}.", last_result
+
+    # NO, because now we're never going to use the output of the original image data
+    # img_data = copy.deepcopy(org_img_data)
+
+    # Img data is pulled automatically from the status_container, or should be...
+    if apply_stage_2:
+        print("Processing images (Stage 2)")
+        last_result = stage2_process(img_data, captions, a_prompt, n_prompt, num_samples, upscale, edm_steps,
+                                     s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype,
+                                     ae_dtype,
+                                     gamma_correction, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2,
+                                     model_select,
+                                     ckpt_select, num_images, random_seed, batch_process_llava, face_resolution,
+                                     apply_bg, apply_face,
+                                     face_prompt, outputs_folder, make_comparison_video, video_duration, video_fps,
+                                     video_width, video_height, batch_process_folder, dont_update_progress=False,
+                                     unload=True, progress=progress)
+
+    batch_processing_val = False
+    end_time = time.time()
+    global unique_counter
+    unique_counter = unique_counter + 1
+    return f"Batch Processing Completed: processed {total_images * num_images} images at in {end_time - start_time:.2f} seconds #{unique_counter}", last_result
+
+
 def process_outputs(output_dir, make_comparison_video, video_duration, video_fps, video_width, video_height):
     metadata_dir = os.path.join(output_dir, "images_meta_data")
     if not os.path.exists(metadata_dir):
@@ -938,79 +1004,6 @@ def start_batch_process(batch_process_folder, outputs_folder, main_prompt, a_pro
         print(f"An exception occurred: {e} at {traceback.format_exc()}")
         batch_processing_val = False
     return result
-
-
-def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num_samples, upscale,
-                  edm_steps, s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
-                  gamma_correction, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,
-                  ckpt_select, num_images, random_seed, apply_stage_1, apply_stage_2, face_resolution, apply_bg,
-                  apply_face,
-                  face_prompt,
-                  batch_process_llava, auto_deload_llava, temperature, top_p, qs, make_comparison_video, video_duration,
-                  video_fps,
-                  video_width, video_height, batch_process_folder, progress=gr.Progress()):
-    global batch_processing_val, llava_agent
-    ckpt_select = get_ckpt_path(ckpt_select)
-    if not ckpt_select:
-        return "No checkpoint selected. Please select a checkpoint to continue."
-    start_time = time.time()
-    last_result = "Select something to do."
-    if batch_processing_val:
-        print("Batch processing already in progress.")
-        return "Batch processing already in progress.", "Batch processing already in progress."
-    batch_processing_val = True
-    # Get the list of image files in the folder
-    total_images = len(img_data.keys())
-    global model
-    if not batch_processing_val:
-        return f"Batch Processing Completed: Cancelled at {time.ctime()}.", last_result
-
-    # DO THIS FIRST SO WE DON'T LOAD LLAVA AND SUPIR AT THE SAME TIME
-    # Also, don't do it only if stage 1 is applied.
-    if batch_process_llava:
-        print('Processing LLaVA')
-        last_result = llava_process(img_data, temperature, top_p, qs, unload=True, progress=progress)
-        captions = status_container.llava_captions
-        if auto_deload_llava:
-            print("Clearing LLaVA...")
-            clear_llava()
-    else:
-        captions = [main_prompt] * total_images
-
-    # NOW perform stage 1, and set unload appropriately if doing stage 2
-    do_unload = not apply_stage_2
-    if apply_stage_1:
-        print("Processing images (Stage 1)")
-        last_result = stage1_process(img_data, gamma_correction, model_select, ckpt_select, unload=do_unload,
-                                     progress=progress)
-        img_data = status_container.image_data
-
-    if not batch_processing_val:
-        model = model.to('cpu')
-        return f"Batch Processing Completed: Cancelled at {time.ctime()}.", last_result
-
-    # NO, because now we're never going to use the output of the original image data
-    # img_data = copy.deepcopy(org_img_data)
-
-    # Img data is pulled automatically from the status_container, or should be...
-    if apply_stage_2:
-        print("Processing images (Stage 2)")
-        last_result = stage2_process(img_data, captions, a_prompt, n_prompt, num_samples, upscale, edm_steps,
-                                     s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype,
-                                     ae_dtype,
-                                     gamma_correction, linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2,
-                                     model_select,
-                                     ckpt_select, num_images, random_seed, batch_process_llava, face_resolution,
-                                     apply_bg, apply_face,
-                                     face_prompt, outputs_folder, make_comparison_video, video_duration, video_fps,
-                                     video_width, video_height, batch_process_folder, dont_update_progress=False,
-                                     unload=True, progress=progress)
-
-    batch_processing_val = False
-    end_time = time.time()
-    global unique_counter
-    unique_counter = unique_counter + 1
-    return f"Batch Processing Completed: processed {total_images * num_images} images at in {end_time - start_time:.2f} seconds #{unique_counter}", last_result
 
 
 def stop_batch_upscale(progress=gr.Progress()):
@@ -1181,7 +1174,7 @@ with block:
                                                      value="")
 
                 with gr.Accordion("Stage1 options", open=False):
-                    gamma_correction_slider = gr.Slider(label="Gamma Correction", minimum=0.1, maximum=2.0, value=0.1,
+                    gamma_correction_slider = gr.Slider(label="Gamma Correction", minimum=0.1, maximum=2.0, value=1.0,
                                                         step=0.1)
                 with gr.Accordion("Stage2 options", open=False):
                     with gr.Row():
