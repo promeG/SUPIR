@@ -138,8 +138,21 @@ def list_models():
         if os.path.exists(os.path.join(os.path.dirname(__file__), args.ckpt)):
             output.append(os.path.join(os.path.dirname(__file__), args.ckpt))
     # Sort the models
+    output = [os.path.basename(f) for f in output]
     output.sort()
     return output
+
+
+def get_ckpt_path(ckpt_path):
+    if os.path.exists(ckpt_path):
+        return ckpt_path
+    else:
+        if os.path.exists(args.ckpt_dir):
+            return os.path.join(args.ckpt_dir, ckpt_path)
+        local_model_dir = os.path.join(os.path.dirname(__file__), args.ckpt_dir)
+        if os.path.exists(local_model_dir):
+            return os.path.join(local_model_dir, ckpt_path)
+    return None
 
 
 def list_styles():
@@ -933,6 +946,9 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
                   video_fps,
                   video_width, video_height, batch_process_folder, progress=gr.Progress()):
     global batch_processing_val, llava_agent
+    ckpt_select = get_ckpt_path(ckpt_select)
+    if not ckpt_select:
+        return "No checkpoint selected. Please select a checkpoint to continue."
     start_time = time.time()
     last_result = "Select something to do."
     if batch_processing_val:
