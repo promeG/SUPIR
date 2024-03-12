@@ -33,8 +33,6 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1')
 parser.add_argument("--share", type=str, default=False)
 parser.add_argument("--port", type=int)
-parser.add_argument("--no_llava", action='store_true', default=False)
-parser.add_argument("--use_image_slider", action='store_true', default=False)
 parser.add_argument("--log_history", action='store_true', default=False)
 parser.add_argument("--loading_half_params", action='store_true', default=False)
 parser.add_argument("--use_tile_vae", action='store_true', default=False)
@@ -52,7 +50,6 @@ parser.add_argument("--debug", action='store_true', default=False)
 args = parser.parse_args()
 
 server_ip = args.ip
-use_llava = not args.no_llava
 if args.debug:
     args.open_browser = False
 
@@ -113,11 +110,13 @@ def list_models():
     model_dir = args.ckpt_dir
     output = []
     if os.path.exists(model_dir):
-        output = [os.path.join(model_dir, f) for f in os.listdir(model_dir) if f.endswith('.safetensors') or f.endswith('.ckpt')]
+        output = [os.path.join(model_dir, f) for f in os.listdir(model_dir) if
+                  f.endswith('.safetensors') or f.endswith('.ckpt')]
     else:
         local_model_dir = os.path.join(os.path.dirname(__file__), args.ckpt_dir)
         if os.path.exists(local_model_dir):
-            output = [os.path.join(local_model_dir, f) for f in os.listdir(local_model_dir) if f.endswith('.safetensors') or f.endswith('.ckpt')]
+            output = [os.path.join(local_model_dir, f) for f in os.listdir(local_model_dir) if
+                      f.endswith('.safetensors') or f.endswith('.ckpt')]
     if os.path.exists(args.ckpt) and args.ckpt not in output:
         output.append(args.ckpt)
     else:
@@ -185,7 +184,7 @@ def load_face_helper():
 last_used_checkpoint = None
 
 
-def load_model(selected_model, selected_checkpoint, progress=None):
+def load_model(selected_model, selected_checkpoint, device='cpu', progress=None):
     global model, last_used_checkpoint
     checkpoint_use = args.ckpt
     if selected_checkpoint:
@@ -201,7 +200,7 @@ def load_model(selected_model, selected_checkpoint, progress=None):
     if model is None:
         if progress is not None:
             progress(1 / 2, desc="Loading SUPIR...")
-        model = create_SUPIR_model('options/SUPIR_v0.yaml', supir_sign='Q', device='cpu',
+        model = create_SUPIR_model('options/SUPIR_v0.yaml', supir_sign='Q', device=device,
                                    ckpt=checkpoint_use)
         if args.loading_half_params:
             model = model.half()
@@ -233,7 +232,7 @@ def load_model(selected_model, selected_checkpoint, progress=None):
 
 def load_llava():
     global llava_agent
-    if llava_agent is None and use_llava:
+    if llava_agent is None:
         llava_path = get_model('liuhaotian/llava-v1.5-7b')
         llava_agent = LLavaAgent(llava_path, device=LLaVA_device, load_8bit=args.load_8bit_llava,
                                  load_4bit=args.load_4bit_llava)
@@ -241,6 +240,7 @@ def load_llava():
 
 def clear_llava():
     global llava_agent
+    del llava_agent
     llava_agent = None
     torch.cuda.empty_cache()
 
@@ -344,7 +344,8 @@ def update_elements(status_label):
             # Hide gallery, show empty slider
         if "Stage 1" in status_label:
             print("Updating stage 1 output image")
-            result_slider_el = gr.update(value=status_container.result_gallery, visible=True, elem_class=["active", "preview_slider", "preview_box"])
+            result_slider_el = gr.update(value=status_container.result_gallery, visible=True,
+                                         elem_class=["active", "preview_slider", "preview_box"])
             result_gallery_el = gr.update(visible=False, value=None, elem_class=["preview_box"])
         elif single_process:
             print("Updating Single Output Image")
@@ -355,7 +356,8 @@ def update_elements(status_label):
                     prompt_el = gr.update(value=status_container.llava_caption)
             except:
                 pass
-            result_slider_el = gr.update(value=status_container.result_gallery, visible=True, elem_class=["active", "preview_slider", "preview_box"])
+            result_slider_el = gr.update(value=status_container.result_gallery, visible=True,
+                                         elem_class=["active", "preview_slider", "preview_box"])
             result_gallery_el = gr.update(visible=False, value=None, elem_class=["preview_box"])
             event_id_el = gr.update(value=status_container.event_id)
             fb_score_el = gr.update(value=status_container.fb_score)
@@ -365,7 +367,8 @@ def update_elements(status_label):
             comparison_video_el = gr.update(value=status_container.comparison_video)
         else:
             print("Updating Batch Outputs")
-            result_gallery_el = gr.update(value=status_container.result_gallery, visible=True, elem_class=["active", "preview_box"])
+            result_gallery_el = gr.update(value=status_container.result_gallery, visible=True,
+                                          elem_class=["active", "preview_box"])
             result_slider_el = gr.update(visible=False, value=None, elem_class=["preview_slider", "preview_box"])
             event_id_el = gr.update(value=status_container.event_id)
             fb_score_el = gr.update(value=status_container.fb_score)
@@ -395,7 +398,8 @@ def populate_slider_single():
         img.save(temp_path.name)
         img = img.resize(resized_dims)
         img.save(lowres_path)
-    return (gr.update(value=[lowres_path, temp_path.name], visible=True, elem_classes=["active", "preview_slider", "preview_box"]),
+    return (gr.update(value=[lowres_path, temp_path.name], visible=True,
+                      elem_classes=["active", "preview_slider", "preview_box"]),
             gr.update(visible=False, value=None, elem_classes=["preview_box"]))
 
 
@@ -414,46 +418,52 @@ def populate_gallery():
         img.save(temp_path.name)
         img = img.resize(resized_dims)
         img.save(lowres_path)
-    return gr.update(value=[lowres_path, temp_path.name], visible=True, elem_classes=["preview_box", "active"]), gr.update(visible=False, value=None, elem_classes=["preview_slider", "preview_box"])
+    return gr.update(value=[lowres_path, temp_path.name], visible=True,
+                     elem_classes=["preview_box", "active"]), gr.update(visible=False, value=None,
+                                                                        elem_classes=["preview_slider", "preview_box"])
 
 
 def llava_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], temp, p, question=None, unload=True,
-                  progress=None):
+                  progress=gr.Progress()):
     global llava_agent, status_container
     output_captions = []
     status_container.llava_captions = []
-    if use_llava:
-        total_steps = len(inputs.keys()) + (2 if unload else 1)
-        step = 1
+    total_steps = len(inputs.keys()) + (2 if unload else 1)
+    step = 1
+    if progress is not None:
+        progress(step / total_steps, desc="Loading LLaVA...")
+    load_llava()
+    print("LLaVA loaded.")
+    llava_agent = to_gpu(llava_agent, LLaVA_device)
+    print("LLaVA moved to GPU.")
+    if progress is not None:
+        progress(step / total_steps, desc="LLaVA loaded, captioning images...")
+    for img_path, img in inputs.items():
         if progress is not None:
-            progress(step / total_steps, desc="Loading LLaVA...")
-        load_llava()
-        print("LLaVA loaded.")
-        llava_agent = to_gpu(llava_agent, LLaVA_device)
-        print("LLaVA moved to GPU.")
+            progress(step / total_steps, desc=f"Processing image {step}/{len(inputs)} with LLaVA...")
+        lq = HWC3(img)
+        lq = Image.fromarray(lq.astype('uint8'))
+        captions = llava_agent.gen_image_caption([lq], temperature=temp, top_p=p, qs=question)
+        output_captions.append(captions[0])
+        status_container.llava_caption = captions[0]
+        step += 1
+        if not batch_processing_val:  # Check if batch processing has been stopped
+            break
+    if unload:
         if progress is not None:
-            progress(step / total_steps, desc="LLaVA loaded, captioning images...")
-        for img_path, img in inputs.items():
-            if progress is not None:
-                progress(step / total_steps, desc=f"Processing image {step}/{len(inputs)} with LLaVA...")
-            lq = HWC3(img)
-            lq = Image.fromarray(lq.astype('uint8'))
-            captions = llava_agent.gen_image_caption([lq], temperature=temp, top_p=p, qs=question)
-            output_captions.append(captions[0])
-            status_container.llava_caption = captions[0]
-            step += 1
-            if not batch_processing_val:  # Check if batch processing has been stopped
-                break
-        if progress is not None and unload:
             progress(step / total_steps, desc="Unloading LLaVA...")
+        if args.load_4bit_llava or args.load_8bit_llava:
+            print("Clearing LLaVA...")
+            clear_llava()
+        else:
+            print("Unloading LLaVA...")
             llava_agent = llava_agent.to('cpu')
+        print("LLaVA unloaded.")
+        if progress is not None:
             step += 1
             progress(step / total_steps, desc="LLaVA processing completed.")
-        status_container.llava_captions = output_captions
-        return f"LLaVA Processing Completed: {len(inputs)} images processed at {time.ctime()}."
-    else:
-        status_container.llava_caption = ""
-        return f"LLaVA is not available at {time.ctime()}."
+    status_container.llava_captions = output_captions
+    return f"LLaVA Processing Completed: {len(inputs)} images processed at {time.ctime()}."
 
 
 def stage1_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], gamma, model_select, ckpt_select, unload=True,
@@ -464,7 +474,7 @@ def stage1_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], gamma, mo
     total_steps = len(inputs.keys()) + (1 if unload else 0)
     step = 0
     main_begin_time = time.time()
-    load_model(model_select, ckpt_select, progress)
+    load_model(model_select, ckpt_select, progress=progress)
     model = to_gpu(model, SUPIR_device)
     all_results = []
     for image_path, img in inputs.items():
@@ -573,7 +583,7 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
                    progress=gr.Progress()):
     global model, status_container, event_id
     main_begin_time = time.time()
-    load_model(model_select, ckpt_select, progress)
+    load_model(model_select, ckpt_select, progress=progress)
     to_gpu(model, SUPIR_device)
     model.ae_dtype = convert_dtype(ae_dtype)
     model.model.dtype = convert_dtype(diff_dtype)
@@ -916,7 +926,7 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
     batch_processing_val = True
     # Get the list of image files in the folder
     total_images = len(img_data.keys())
-
+    global model
     if not batch_processing_val:
         return f"Batch Processing Completed: Cancelled at {time.ctime()}.", last_result
 
@@ -927,6 +937,7 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
         last_result = llava_process(img_data, temperature, top_p, qs, unload=True, progress=progress)
         captions = status_container.llava_captions
         if auto_deload_llava:
+            print("Clearing LLaVA...")
             clear_llava()
     else:
         captions = [main_prompt] * total_images
@@ -940,9 +951,11 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
         img_data = status_container.image_data
 
     if not batch_processing_val:
+        model = model.to('cpu')
         return f"Batch Processing Completed: Cancelled at {time.ctime()}.", last_result
+
     # NO, because now we're never going to use the output of the original image data
-    #img_data = copy.deepcopy(org_img_data)
+    # img_data = copy.deepcopy(org_img_data)
 
     # Img data is pulled automatically from the status_container, or should be...
     if apply_stage_2:
@@ -1090,9 +1103,11 @@ with block:
                                             visible=False)
             with gr.Column(elem_classes=['preview_col'], elem_id="preview_column") as result_col:
                 result_gallery = gr.Gallery(label='Output', elem_id="gallery2", elem_classes=["preview_box"],
-                                            height=400, visible=False, rows=2, columns=4, allow_preview=True, show_download_button=False, show_share_button=False)
+                                            height=400, visible=False, rows=2, columns=4, allow_preview=True,
+                                            show_download_button=False, show_share_button=False)
                 result_slider = ImageSlider(label='Output', interactive=False, show_download_button=True,
-                                            elem_id="gallery1", elem_classes=["preview_box", "preview_slider", "active"],
+                                            elem_id="gallery1",
+                                            elem_classes=["preview_box", "preview_slider", "active"],
                                             height=400, container=True)
                 slider_dl_button = gr.Button(value=dl_symbol, elem_classes=["slider_button"], visible=True,
                                              elem_id="download_button")
@@ -1113,8 +1128,8 @@ with block:
                         populate_gallery_button.click(fn=populate_gallery, outputs=[result_gallery, result_slider],
                                                       show_progress=True, queue=True)
                     with gr.Row():
-                        apply_stage_1_checkbox = gr.Checkbox(label="Apply Stage 1", value=False)
                         apply_llava_checkbox = gr.Checkbox(label="Apply LLaVa", value=False)
+                        apply_stage_1_checkbox = gr.Checkbox(label="Apply Stage 1", value=False)
                         apply_stage_2_checkbox = gr.Checkbox(label="Apply Stage 2", value=True)
                     show_select = args.ckpt_browser
                     with gr.Row(elem_id="model_select_row"):
@@ -1139,8 +1154,7 @@ with block:
                             num_images_slider = gr.Slider(label="Number Of Images To Generate", minimum=1, maximum=200
                                                           , value=1, step=1)
                             num_samples_slider = gr.Slider(label="Batch Size", minimum=1,
-                                                           maximum=4 if not args.use_image_slider else 1
-                                                           , value=1, step=1)
+                                                           maximum=4, value=1, step=1)
                         with gr.Column():
                             random_seed_checkbox = gr.Checkbox(label="Randomize Seed", value=True)
                     with gr.Row():
@@ -1307,7 +1321,8 @@ with block:
     ]
 
     output_elements = [
-        prompt_textbox, result_gallery, result_slider, event_id, fb_score, fb_text, seed_slider, face_gallery, comparison_video
+        prompt_textbox, result_gallery, result_slider, event_id, fb_score, fb_text, seed_slider, face_gallery,
+        comparison_video
     ]
 
     refresh_models_button.click(fn=refresh_models_click, outputs=[ckpt_select_dropdown])
