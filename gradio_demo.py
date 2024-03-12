@@ -781,10 +781,12 @@ def stage2_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions,
             all_results.extend(results)
             number_of_images_results.extend(results)
         if len(inputs.keys()) == 1:
-            # Prepend the first input image to all_results for slider
-            all_results.insert(0, list(inputs.values())[0])
+            # Open the original image and add it for compare, not the stage1 image...
+            with open(image_path, 'rb') as f:
+                img = Image.open(f)
+                img = np.array(img)
+                all_results.insert(0, img)
         output_data[image_path] = number_of_images_results
-
         status_container.prompt = img_prompt
         status_container.result_gallery = all_results
         status_container.event_id = event_id
