@@ -49,6 +49,20 @@ parser.add_argument("--outputs_folder", type=str, default='outputs')
 parser.add_argument("--debug", action='store_true', default=False)
 args = parser.parse_args()
 
+total_vram = 100000
+auto_unload = False
+if torch.cuda.is_available():
+    # Get total GPU memory
+    total_vram = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+    print("Total VRAM: ", total_vram, "GB")
+    # If total VRAM <= 12GB, set auto_unload to True
+    auto_unload = total_vram <= 12
+
+    if total_vram <= 24:
+        args.loading_half_params = True
+        args.use_tile_vae = True
+        print("Loading half params")
+
 server_ip = args.ip
 if args.debug:
     args.open_browser = False
@@ -65,7 +79,8 @@ elif torch.cuda.device_count() == 1:
     SUPIR_device = 'cuda:0'
     LLaVA_device = 'cuda:0'
 else:
-    raise ValueError('Currently support CUDA only.')
+    SUPIR_device = 'cpu'
+    LLaVA_device = 'cpu'
 
 face_helper = None
 model: SUPIRModel = None
@@ -1189,14 +1204,6 @@ with block:
                                                       value=selected_neg)
                 with gr.Accordion("LLaVA options", open=False):
                     with gr.Column():
-                        total_vram = 100000
-                        auto_unload = False
-                        if torch.cuda.is_available():
-                            # Get total GPU memory
-                            total_vram = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
-                            print("Total VRAM: ", total_vram, "GB")
-                            # If total VRAM <= 12GB, set auto_unload to True
-                            auto_unload = total_vram <= 12
                         auto_unload_llava = gr.Checkbox(label="Auto Unload LLaVA (Low VRAM)", value=auto_unload)
                         setattr(auto_unload_llava, "do_not_save_to_config", True)
 
