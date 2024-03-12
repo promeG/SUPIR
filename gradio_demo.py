@@ -564,6 +564,7 @@ def stage1_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], gamma, mo
         if progress is not None:
             progress(step / total_steps, desc=f"Processing image {step}/{len(inputs)}...")
         lq = HWC3(img)
+        original_shape = lq.shape
         lq = fix_resize(lq, 512)
         # stage1
         lq = np.array(lq) / 255 * 2 - 1
@@ -575,6 +576,10 @@ def stage1_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], gamma, mo
         lq = np.power(lq, gamma)
         lq *= 255.0
         lq = lq.round().clip(0, 255).astype(np.uint8)
+        # Resize back to original size
+        lq = Image.fromarray(lq)
+        lq = lq.resize(original_shape[:2][::-1], Image.BICUBIC)
+        lq = np.array(lq)
         status_container.stage_1_output_image = lq
         output_data[image_path] = lq
         all_results.append(lq)
