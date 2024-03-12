@@ -191,7 +191,7 @@ def list_styles():
 def selected_model():
     models = list_models()
     target_model = args.ckpt
-    if target_model in models:
+    if os.path.basename(target_model) in models:
         return target_model
     else:
         if len(models) > 0:
