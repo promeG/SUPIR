@@ -139,6 +139,8 @@ def list_models():
             output.append(os.path.join(os.path.dirname(__file__), args.ckpt))
     # Sort the models
     output = [os.path.basename(f) for f in output]
+    # Ensure the values are unique
+    output = list(set(output))
     output.sort()
     return output
 
