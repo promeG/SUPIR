@@ -1,6 +1,8 @@
 import subprocess
 
-def create_comparison_video(image_a, image_b, output_video, duration=5, frame_rate=30, video_width=1920, video_height=1080):
+
+def create_comparison_video(image_a, image_b, output_video, duration=5, frame_rate=30, video_width=1920,
+                            video_height=1080):
     ffmpeg_cmd = [
         'ffmpeg',
         '-y',  # Overwrite output file if it exists

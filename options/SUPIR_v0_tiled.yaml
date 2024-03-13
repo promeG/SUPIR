@@ -126,14 +126,12 @@ model:
           target: torch.nn.Identity
 
     sampler_config:
-      target: sgm.modules.diffusionmodules.sampling.TiledRestoreEDMSampler
+      target: sgm.modules.diffusionmodules.sampling.TiledRestoreDPMPP2MSampler
       params:
         num_steps: 100
         restore_cfg: 4.0
         s_churn: 0
         s_noise: 1.003
-        tile_size: 128
-        tile_stride: 64
         discretization_config:
           target: sgm.modules.diffusionmodules.discretizer.LegacyDDPMDiscretization
         guider_config:

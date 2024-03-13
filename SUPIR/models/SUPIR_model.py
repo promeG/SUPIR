@@ -9,6 +9,7 @@ from SUPIR.utils.tilevae import VAEHook
 from sgm.models.diffusion import DiffusionEngine
 from sgm.modules.distributions.distributions import DiagonalGaussianDistribution
 from sgm.util import instantiate_from_config
+from ui_helpers import printt
 
 
 class SUPIRModel(DiffusionEngine):
@@ -18,7 +19,8 @@ class SUPIRModel(DiffusionEngine):
         self.model.load_control_model(control_model)
         self.first_stage_model.denoise_encoder = copy.deepcopy(self.first_stage_model.encoder)
         self.sampler_config = kwargs['sampler_config']
-
+        self.previous_sampler_config = None  # Store the previous sampler configuration
+        self.sampler = None  # Initialize sampler as None
         assert (ae_dtype in ['fp32', 'fp16', 'bf16']) and (diffusion_dtype in ['fp32', 'fp16', 'bf16'])
         if ae_dtype == 'fp32':
             ae_dtype = torch.float32
@@ -102,17 +104,30 @@ class SUPIRModel(DiffusionEngine):
         if n_p == 'default':
             n_p = self.n_p
 
-        self.sampler_config.params.num_steps = num_steps
-        if use_linear_cfg:
-            self.sampler_config.params.guider_config.params.scale_min = cfg_scale
-            self.sampler_config.params.guider_config.params.scale = cfg_scale_start
-        else:
-            self.sampler_config.params.guider_config.params.scale_min = cfg_scale
-            self.sampler_config.params.guider_config.params.scale = cfg_scale
-        self.sampler_config.params.restore_cfg = restoration_scale
-        self.sampler_config.params.s_churn = s_churn
-        self.sampler_config.params.s_noise = s_noise
-        self.sampler = instantiate_from_config(self.sampler_config)
+        # Update sampler configuration
+        new_sampler_config = {
+            'num_steps': num_steps,
+            'restore_cfg': restoration_scale,
+            's_churn': s_churn,
+            's_noise': s_noise,
+            'cfg_scale': (cfg_scale, cfg_scale_start) if use_linear_cfg else cfg_scale,
+        }
+
+        # Check if the sampler needs to be re-instantiated
+        if self.previous_sampler_config != new_sampler_config or self.sampler is None:
+            self.sampler_config.params.num_steps = num_steps
+            if use_linear_cfg:
+                self.sampler_config.params.guider_config.params.scale_min = cfg_scale
+                self.sampler_config.params.guider_config.params.scale = cfg_scale_start
+            else:
+                self.sampler_config.params.guider_config.params.scale_min = cfg_scale
+                self.sampler_config.params.guider_config.params.scale = cfg_scale
+            self.sampler_config.params.restore_cfg = restoration_scale
+            self.sampler_config.params.s_churn = s_churn
+            self.sampler_config.params.s_noise = s_noise
+            printt("Instantiating sampler...")
+            self.sampler = instantiate_from_config(self.sampler_config)
+            self.previous_sampler_config = new_sampler_config
 
         if seed == -1:
             seed = random.randint(0, 65535)
@@ -124,34 +139,40 @@ class SUPIRModel(DiffusionEngine):
 
         c, uc = self.prepare_condition(_z, p, p_p, n_p, n)
 
+        printt("Loading denoiser??")
         denoiser = lambda input, sigma, c, control_scale: self.denoiser(
             self.model, input, sigma, c, control_scale, **kwargs
         )
+        printt("Loaded denoiser??")
 
         noised_z = torch.randn_like(_z).to(_z.device)
-
+        printt("Sampling...")
         _samples = self.sampler(denoiser, noised_z, cond=c, uc=uc, x_center=z_stage1, control_scale=control_scale,
                                 use_linear_control_scale=use_linear_control_scale,
                                 control_scale_start=control_scale_start)
+        printt("Sampled??")
         output = self.decode_first_stage(_samples)
+        printt("Decoded??")
         if color_fix_type == 'Wavelet':
             output = wavelet_reconstruction(output, x_stage1)
+            printt("Wavelet??")
         elif color_fix_type == 'AdaIn':
             output = adaptive_instance_normalization(output, x_stage1)
+            printt("AdaIn??")
         return output
 
-    def init_tile_vae(self, encoder_tile_size=512, decoder_tile_size=64):
+    def init_tile_vae(self, encoder_tile_size=512, decoder_tile_size=64, use_fast=False):
         self.first_stage_model.denoise_encoder.original_forward = self.first_stage_model.denoise_encoder.forward
         self.first_stage_model.encoder.original_forward = self.first_stage_model.encoder.forward
         self.first_stage_model.decoder.original_forward = self.first_stage_model.decoder.forward
         self.first_stage_model.denoise_encoder.forward = VAEHook(
             self.first_stage_model.denoise_encoder, encoder_tile_size, is_decoder=False, fast_decoder=False,
-            fast_encoder=False, color_fix=False, to_gpu=True)
+            fast_encoder=use_fast, color_fix=False, to_gpu=True)
         self.first_stage_model.encoder.forward = VAEHook(
             self.first_stage_model.encoder, encoder_tile_size, is_decoder=False, fast_decoder=False,
-            fast_encoder=False, color_fix=False, to_gpu=True)
+            fast_encoder=use_fast, color_fix=False, to_gpu=True)
         self.first_stage_model.decoder.forward = VAEHook(
-            self.first_stage_model.decoder, decoder_tile_size, is_decoder=True, fast_decoder=False,
+            self.first_stage_model.decoder, decoder_tile_size, is_decoder=True, fast_decoder=use_fast,
             fast_encoder=False, color_fix=False, to_gpu=True)
 
     def prepare_condition(self, _z, p, p_p, n_p, n):
@@ -181,20 +202,12 @@ class SUPIRModel(DiffusionEngine):
                 c.append(_c)
         return c, uc
 
-
-if __name__ == '__main__':
-    from SUPIR.util import create_model, load_state_dict
-
-    model = create_model('../../options/dev/SUPIR_paper_version.yaml')
-
-    SDXL_CKPT = '/opt/data/private/AIGC_pretrain/SDXL_cache/sd_xl_base_1.0_0.9vae.safetensors'
-    SUPIR_CKPT = '/opt/data/private/AIGC_pretrain/SUPIR_cache/SUPIR-paper.ckpt'
-    model.load_state_dict(load_state_dict(SDXL_CKPT), strict=False)
-    model.load_state_dict(load_state_dict(SUPIR_CKPT), strict=False)
-    model = model.cuda()
-
-    rand_x = torch.randn(1, 3, 512, 512).cuda()
-    prompt = ['a professional, detailed, high-quality photo']
-    samples = model.batchify_sample(rand_x, prompt, num_steps=50, restoration_scale=4.0, s_churn=0, cfg_scale=4.0,
-                                    seed=-1,
-                                    num_samples=1)
+    def move_to(self, device):
+        """Moves VAEHook's .net objects to the specified device."""
+        if hasattr(self.first_stage_model, 'denoise_encoder') and isinstance(self.first_stage_model.denoise_encoder,
+                                                                             VAEHook):
+            self.first_stage_model.denoise_encoder.to(device)
+        if hasattr(self.first_stage_model, 'encoder') and isinstance(self.first_stage_model.encoder, VAEHook):
+            self.first_stage_model.encoder.to(device)
+        if hasattr(self.first_stage_model, 'decoder') and isinstance(self.first_stage_model.decoder, VAEHook):
+            self.first_stage_model.decoder.to(device)

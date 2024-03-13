@@ -14,3 +14,6 @@ class StatusContainer:
         self.comparison_video = None
         self.llava_caption = ""
         self.llava_captions = []
+        self.is_batch = False
+        self.is_video = False
+        self.video_params = {}
