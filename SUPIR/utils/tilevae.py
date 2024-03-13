@@ -864,12 +864,12 @@ class VAEHook:
         num_completed = 0
 
         # Build task queues
-        printt("Building task queues")
+        printt("Building task queues.")
         single_task_queue = build_task_queue(net, is_decoder)
-        printt("Task queues built")
+        printt("Task queues built.")
         # print(single_task_queue)
         if self.fast_mode:
-            printt("Fast mode setup")
+            printt("Fast mode setup.")
             # Fast mode: downsample the input image to the tile size,
             # then estimate the group norm parameters on the downsampled image
             scale_factor = tile_size / max(height, width)
@@ -888,8 +888,8 @@ class VAEHook:
             if self.estimate_group_norm(downsampled_z, estimate_task_queue, color_fix=self.color_fix):
                 single_task_queue = estimate_task_queue
             del downsampled_z
-            printt("Fast mode setup done")
-        printt("Executing task queues")
+            printt("Fast mode setup done.")
+        printt("Executing task queues.")
         task_queues = [clone_task_queue(single_task_queue) for _ in range(num_tiles)]
 
         # Dummy result
@@ -915,7 +915,7 @@ class VAEHook:
             # if state.interrupted: interrupted = True ; break
 
             group_norm_param = GroupNormParam()
-            printt("Executing task queues")
+            printt("Executing task queues.")
             for i in range(num_tiles) if forward else reversed(range(num_tiles)):
                 # if state.interrupted: interrupted = True ; break
 
@@ -978,10 +978,10 @@ class VAEHook:
                     del tile
 
             if interrupted:
-                printt("Interrupted")
+                printt("Interrupted.")
                 break
             if num_completed == num_tiles:
-                printt("Done")
+                printt("Done.")
                 break
 
             # insert the group norm task to the head of each task queue
@@ -993,7 +993,7 @@ class VAEHook:
 
         # Done!
         pbar.close()
-        printt("Task queues executed")
+        printt("Task queues executed.")
         return result.to(dtype) if result is not None else result_approx.to(device)
 
     def to(self, device):

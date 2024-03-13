@@ -157,7 +157,7 @@ def run_ffmpeg_progress(args: List[str], progress=gr.Progress()):
 last_time = None
 
 
-def printt(msg):
+def printt(msg, progress=gr.Progress()):
     global last_time
     now = time.time()
     if last_time is not None:
@@ -165,4 +165,5 @@ def printt(msg):
         print(f"{msg}: {elapsed:.2f}s")
     else:
         print(msg)
+    progress(None, desc=msg)
     last_time = now

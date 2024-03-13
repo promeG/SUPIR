@@ -335,7 +335,7 @@ def to_gpu(elem_to_load, device):
     return elem_to_load
 
 
-def update_model_settings(model_type):
+def update_model_settings(model_type, param_setting):
     """
     Returns a series of gr.updates with settings based on the model type.
     If 'model_type' contains 'lightning', it uses the settings for a 'lightning' SDXL model.
@@ -363,12 +363,14 @@ def update_model_settings(model_type):
     # Choose the settings based on the model type
     settings = lightning_settings if 'Lightning' in model_type else normal_settings
 
-    # Generate the updates
-    updates = []
-    for key, value in settings.items():
-        updates.append(gr.update(value=value))  # Assuming `gr.update` is the correct method to use
+    if param_setting == "Quality":
+        s_cfg = settings['s_cfg_Quality']
+        spt_linear_CFG = settings['spt_linear_CFG_Quality']
+    else:
+        s_cfg = settings['s_cfg_Fidelity']
+        spt_linear_CFG = settings['spt_linear_CFG_Fidelity']
 
-    return updates
+    return gr.update(value=s_cfg), gr.update(value=spt_linear_CFG), gr.update(value=settings['edm_steps'])
 
 
 def update_inputs(input_file, upscale_amount):
@@ -1281,12 +1283,12 @@ with block:
                     with gr.Row():
                         with gr.Column():
                             linear_cfg_checkbox = gr.Checkbox(label="Linear CFG", value=True)
-                            spt_linear_cfg_checkbox = gr.Slider(label="CFG Start", minimum=1.0,
-                                                                maximum=9.0, value=4.0, step=0.5)
+                            spt_linear_cfg_slider = gr.Slider(label="CFG Start", minimum=1.0,
+                                                              maximum=9.0, value=4.0, step=0.5)
                         with gr.Column():
                             linear_s_stage2_checkbox = gr.Checkbox(label="Linear Stage2 Guidance", value=False)
-                            spt_linear_s_stage2_checkbox = gr.Slider(label="Guidance Start", minimum=0.,
-                                                                     maximum=1., value=0., step=0.05)
+                            spt_linear_s_stage2_slider = gr.Slider(label="Guidance Start", minimum=0,
+                                                                   maximum=1, value=0, step=0.05)
                     with gr.Row():
                         with gr.Column():
                             diff_dtype_radio = gr.Radio(['fp32', 'fp16', 'bf16'], label="Diffusion Data Type",
@@ -1380,8 +1382,8 @@ with block:
         "ae_dtype": ae_dtype_radio,
         "linear_CFG": linear_cfg_checkbox,
         "linear_s_stage2": linear_s_stage2_checkbox,
-        "spt_linear_CFG": spt_linear_cfg_checkbox,
-        "spt_linear_s_stage2": spt_linear_s_stage2_checkbox,
+        "spt_linear_CFG": spt_linear_cfg_slider,
+        "spt_linear_s_stage2": spt_linear_s_stage2_slider,
         "model_select": model_select_radio,
         "ckpt_select": ckpt_select_dropdown,
         "num_images": num_images_slider,
@@ -1416,7 +1418,7 @@ with block:
                        outputs=[edm_steps_slider, s_cfg_slider, s_stage2_slider, s_churn_slider,
                                 s_noise_slider, a_prompt_textbox, n_prompt_textbox,
                                 color_fix_type_radio, linear_cfg_checkbox, linear_s_stage2_checkbox,
-                                spt_linear_cfg_checkbox, spt_linear_s_stage2_checkbox])
+                                spt_linear_cfg_slider, spt_linear_s_stage2_slider])
 
     # We just read the output_label and update all the elements when we find "Processing Complete"
     output_label.change(fn=update_elements, show_progress=False, queue=True, inputs=[output_label],
@@ -1444,9 +1446,9 @@ with block:
     src_video_display.clear(fn=update_inputs, inputs=[src_video_display, upscale_slider],
                             outputs=[src_input_file, src_image_display, src_video_display, target_res_textbox])
     # s_cfg_Quality, spt_linear_CFG_Quality, s_cfg_Fidelity, spt_linear_CFG_Fidelity, edm_steps
-    model_settings_elements = [s_cfg_slider, spt_linear_cfg_checkbox, s_cfg_slider, spt_linear_cfg_checkbox,
-                               edm_steps_slider]
-    ckpt_type.change(fn=update_model_settings, inputs=[ckpt_type], outputs=model_settings_elements)
+    model_settings_elements = [s_cfg_slider, spt_linear_cfg_slider, edm_steps_slider]
+
+    ckpt_type.change(fn=update_model_settings, inputs=[ckpt_type, param_setting_select ], outputs=model_settings_elements)
 
 
     def do_nothing():
