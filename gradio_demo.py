@@ -40,7 +40,7 @@ parser.add_argument("--loading_half_params", action='store_true', default=False,
                     help="Enable loading model parameters in half precision to reduce memory usage.")
 parser.add_argument("--use_tile_vae", action='store_true', default=False,
                     help="Enable tiling for the VAE to handle larger images with limited memory.")
-parser.add_argument("--use_fast_tile", action='store_true', default=True,
+parser.add_argument("--use_fast_tile", action='store_true', default=False,
                     help="Use a faster tile encoding/decoding, may impact quality.")
 parser.add_argument("--encoder_tile_size", type=int, default=512,
                     help="Tile size for the encoder. Larger sizes may improve quality but require more memory.")
