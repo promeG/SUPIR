@@ -45,50 +45,32 @@ def detect_hardware_acceleration() -> (str, str, str):
     return '', '', ''
 
 
-def extract_video(video_path: str, output_path: str, quality: int = 100, format: str = 'png') -> (bool, Dict[str, str]):
-    # Extract video parameters from the original video
+def extract_video(video_path: str, output_path: str, quality: int = 100, format: str = 'png') -> (
+        bool, Dict[str, str]):
     video_params = get_video_params(video_path)
-
-    # Determine the scale factor based on quality (100 being the best quality)
-    scale = f"scale=iw*{quality / 100}:-1"
-
-    # Auto-detect hardware acceleration and set video codec accordingly
-    hw_acceleration, hw_decoder, hw_encoder = detect_hardware_acceleration()
-    # Adjust codec for image output, especially for PNG
-    if format.lower() == 'png':
-        codec = 'png'
+    temp_frame_compression = 31 - (quality * 0.31)
+    trim_frame_start = None
+    trim_frame_end = None
+    target_path = output_path
+    temp_frames_pattern = os.path.join(target_path, '%04d.' + format)
+    commands = ['-hwaccel', 'auto', '-i', video_path, '-q:v', str(temp_frame_compression), '-pix_fmt', 'rgb24']
+    resolution = f"{video_params['width']}x{video_params['height']}"
+    video_fps = video_params['framerate']
+    if trim_frame_start is not None and trim_frame_end is not None:
+        commands.extend(['-vf', 'trim=start_frame=' + str(trim_frame_start) + ':end_frame=' + str(
+            trim_frame_end) + ',scale=' + resolution + ',fps=' + str(video_fps)])
+    elif trim_frame_start is not None:
+        commands.extend(
+            ['-vf', 'trim=start_frame=' + str(trim_frame_start) + ',scale=' + resolution + ',fps=' + str(video_fps)])
+    elif trim_frame_end is not None:
+        commands.extend(['-vf',
+                         'trim=end_frame=' + str(trim_frame_end) + ',scale=' + resolution + ',fps=' + str(
+                             video_fps)])
     else:
-        codec = hw_encoder if hw_acceleration else 'libx264'
-
-    # Update the output path to include the desired format
-    output_path_with_format = f"{output_path}/%05d.{format}"
-
-    # Construct ffmpeg command with quality, format, and potential hardware acceleration
-    commands = ['-hwaccel', hw_acceleration, '-i', video_path, '-vf', scale, '-c:v', codec]
-
-    # If framerate information is available, use it in the command
-    if 'framerate' in video_params:
-        commands.insert(-2, f"fps={video_params['framerate']}")  # Insert before '-c:v' argument
-
-    # Ensure the pixel format is appropriate for the output format
-    if format.lower() == 'png':
-        commands.extend(['-pix_fmt', 'rgb24'])
-
-    # For formats that support variable quality, adjust accordingly
-    if format.lower() in ['jpeg', 'jpg', 'webp']:
-        # Adjust quality for lossy formats; scale from 0-100 to codec-specific scale if needed
-        commands.extend(['-qscale:v', str(quality)])
-
-    commands.append(output_path_with_format)
-
-    # Update video_params based on the scale (quality adjustment) and format
-    video_params['format'] = format
-    # Update other parameters as necessary based on the scale and format
-
-    if run_ffmpeg_progress(commands):
-        return True, video_params
-
-    return False, video_params
+        commands.extend(['-vf', 'scale=' + resolution + ',fps=' + str(video_fps)])
+    commands.extend(['-vsync', '0', temp_frames_pattern])
+    printt(f"Extracting frames from video: '{' '.join(commands)}'")
+    return run_ffmpeg_progress(commands), video_params
 
 
 def get_video_params(video_path: str) -> Dict[str, str]:
@@ -114,29 +96,23 @@ def get_video_params(video_path: str) -> Dict[str, str]:
         return {}
 
 
-def compile_video(src_path, output_path, video_params: Dict[str, str], quality: int = 23,
-                  file_type: str = 'mp4') -> Union[MediaData, bool]:
-    # Determine the codec and hardware acceleration settings
-    hw_acceleration, hw_decoder, hw_encoder = detect_hardware_acceleration()
-    codec = hw_encoder if hw_encoder else 'libx264'
-
-    # Adjust the output_path to include the desired filetype
+def compile_video(src_path: str, output_path: str, video_params: Dict[str, str], quality: int = 1,
+                file_type: str = 'mp4') -> bool:
     output_path_with_type = f"{output_path}.{file_type}"
-
-    # Construct ffmpeg command with hardware acceleration, quality, and filetype
-    commands = ['-y', '-f', 'image2', '-framerate', video_params.get('framerate', '30'), '-i', src_path]
-
-    # Add hardware acceleration flags if detected
-    if hw_acceleration:
-        commands += ['-hwaccel', hw_acceleration]
-
-    commands += ['-c:v', codec, '-crf', str(quality), '-pix_fmt', 'yuv420p', output_path_with_type]
-
-    # If video_params include resolution, use it to scale the video up or down
-    if 'width' in video_params and 'height' in video_params:
-        commands += ['-vf', f"scale={video_params['width']}:{video_params['height']}"]
-
-    # If video is compiled successfully, update status_container with the output path
+    temp_frames_pattern = os.path.join(src_path, '%04d.png')
+    video_fps = video_params['framerate']
+    output_video_encoder = 'libx264'
+    commands = ['-hwaccel', 'auto', '-r', str(video_fps), '-i', temp_frames_pattern, '-c:v',
+                output_video_encoder]
+    if output_video_encoder in ['libx264', 'libx265', 'h264_nvenc', 'hevc_nvenc']:
+        output_video_compression = round(51 - (quality * 0.51))
+        if not "nvenc" in output_video_encoder:
+            commands.extend(['-crf', str(output_video_compression), '-preset', 'veryfast'])
+    if output_video_encoder in ['libvpx-vp9']:
+        output_video_compression = round(63 - (quality * 0.63))
+        commands.extend(['-crf', str(output_video_compression)])
+    commands.extend(['-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-y', output_path_with_type])
+    printt(f"Merging frames to video: '{' '.join(commands)}'")
     if run_ffmpeg_progress(commands):
         image_data = MediaData(src_path, 'video')
         image_data.outputs = [output_path_with_type]
