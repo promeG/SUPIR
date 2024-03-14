@@ -11,6 +11,8 @@ import filetype
 from ffmpeg_progress_yield import FfmpegProgress
 from tqdm import tqdm
 
+from SUPIR.perf_timer import PerfTimer
+
 
 def is_video(video_path: str) -> bool:
     return is_file(video_path) and filetype.helpers.is_video(video_path)
@@ -155,15 +157,23 @@ def run_ffmpeg_progress(args: List[str], progress=gr.Progress()):
 
 
 last_time = None
+ui_args = None
+timer = None
 
 
-def printt(msg, progress=gr.Progress()):
-    global last_time
-    now = time.time()
-    if last_time is not None:
-        elapsed = now - last_time
-        print(f"{msg}: {elapsed:.2f}s")
+def printt(msg, progress=gr.Progress(), reset: bool = False):
+    global ui_args, last_time, timer
+    graph = None
+    if ui_args is not None and ui_args.debug:
+        if timer is None:
+            timer = PerfTimer(print_log=True)
+        if reset:
+            graph = timer.make_graph()
+            timer.reset()
+        if not timer.print_log:
+            timer.print_log = True
+        timer.record(msg)
     else:
         print(msg)
-    progress(None, desc=msg)
-    last_time = now
+    if graph:
+        return graph

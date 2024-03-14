@@ -1,5 +1,4 @@
 import argparse
-import copy
 import datetime
 import os
 import shutil
@@ -17,7 +16,6 @@ import torch
 from PIL import Image
 from PIL import PngImagePlugin
 from gradio_imageslider import ImageSlider
-from omegaconf import OmegaConf
 
 from SUPIR.models.SUPIR_model import SUPIRModel
 from SUPIR.util import HWC3, upscale_image, convert_dtype
@@ -27,6 +25,7 @@ from SUPIR.utils.face_restoration_helper import FaceRestoreHelper
 from SUPIR.utils.model_fetch import get_model
 from SUPIR.utils.status_container import StatusContainer
 from llava.llava_agent import LLavaAgent
+import ui_helpers
 from ui_helpers import is_video, extract_video, compile_video, is_image, get_video_params, printt
 
 SUPIR_REVISION = "v40"
@@ -64,6 +63,7 @@ parser.add_argument("--debug", action='store_true', default=False,
                     help="Enable debug mode, disables open_browser, and adds ui buttons for testing elements.")
 
 args = parser.parse_args()
+ui_helpers.ui_args = args
 
 total_vram = 100000
 auto_unload = False
@@ -234,70 +234,39 @@ def load_face_helper():
         )
 
 
-def load_model(selected_model, selected_checkpoint, device='cpu', progress=None):
+def load_model(selected_model, selected_checkpoint, sampler='DPMPP2M', device='cpu', progress=gr.Progress()):
     global model, last_used_checkpoint
 
-    # Calculate total steps
-    total_steps = 1  # Always at least one step for checking/loading the checkpoint
+    # Determine the need for model loading or updating
     need_to_load_model = last_used_checkpoint is None or last_used_checkpoint != selected_checkpoint
     need_to_update_model = selected_model != (model.current_model if model else None)
-    if need_to_load_model:
-        total_steps += 1  # Add a step for loading the model
     if need_to_update_model:
-        total_steps += 1  # Add a step for updating the model configuration
+        del model
+        model = None
 
-    current_step = 0
-
-    # Checkpoint resolution
+    # Resolve checkpoint path
     checkpoint_paths = [
         selected_checkpoint,
         os.path.join(args.ckpt_dir, selected_checkpoint),
         os.path.join(os.path.dirname(__file__), args.ckpt_dir, selected_checkpoint)
     ]
-    checkpoint_use = None
-    for path in checkpoint_paths:
-        if os.path.exists(path):
-            checkpoint_use = path
-            break
+    checkpoint_use = next((path for path in checkpoint_paths if os.path.exists(path)), None)
     if checkpoint_use is None:
         raise FileNotFoundError(f"Checkpoint {selected_checkpoint} not found.")
-    if last_used_checkpoint != checkpoint_use:
-        model = None
+
+    # Check if we need to load a new model
+    if need_to_load_model or model is None:
         torch.cuda.empty_cache()
         last_used_checkpoint = checkpoint_use
-
-    model_cfg = "options/SUPIR_v0_tiled.yaml" if args.use_tile_vae else "options/SUPIR_v0.yaml"
-
-    # Loading the model
-    if model is None:
-        current_step += 1  # Increment for loading the model
-        if progress is not None:
-            progress(current_step / total_steps, desc="Loading SUPIR...")
-
-        model = create_SUPIR_model(model_cfg, supir_sign='Q', device=device, ckpt=checkpoint_use)
+        model_cfg = "options/SUPIR_v0_tiled.yaml" if args.use_tile_vae else "options/SUPIR_v0.yaml"
+        model = create_SUPIR_model(model_cfg, supir_sign=selected_model[-1], device=device, ckpt=checkpoint_use, sampler=sampler)
+        model.current_model = selected_model
         if args.loading_half_params:
             model = model.half()
         if args.use_tile_vae:
             model.init_tile_vae(encoder_tile_size=512, decoder_tile_size=64, use_fast=args.use_fast_tile)
-        model.first_stage_model.denoise_encoder_s1 = copy.deepcopy(model.first_stage_model.denoise_encoder)
-        model.current_model = 'v0-Q'
-
-    # Updating the model configuration if needed
-    if need_to_update_model:
-        current_step += 1  # Increment for updating the model configuration
         if progress is not None:
-            progress(current_step / total_steps, desc=f"Updating SUPIR to {selected_model}...")
-        config = OmegaConf.load(model_cfg)
-        ckpt = torch.load(config[f'SUPIR_CKPT_{selected_model[-1]}'], map_location=device)
-        model.load_state_dict(ckpt, strict=False)
-        model.current_model = selected_model
-
-    # Final step: confirming the model is fully loaded/updated
-    current_step = total_steps  # Ensure progress is shown as completed
-    if progress is not None:
-        progress(current_step / total_steps, desc="SUPIR loaded.")
-    if model.device != device:
-        model = model.to(device)
+            progress(1, desc="SUPIR loaded.")
 
 
 def load_llava():
@@ -387,6 +356,8 @@ def update_inputs(input_file, upscale_amount):
         video_input = gr.update(visible=True, value=input_file)
         file_input = gr.update(visible=False)
         res_output = gr.update(value=update_target_resolution(input_file, upscale_amount))
+    elif input_file is None:
+        file_input = gr.update(visible=True, value=None)
     return file_input, image_input, video_input, res_output
 
 
@@ -466,14 +437,14 @@ def update_elements(status_label):
     fb_text_el = gr.update()
     seed_el = gr.update()
     face_gallery_el = gr.update()
-    global single_process
+
     if "Completed" in status_label:
         print(status_label)
         if "LLaVA" in status_label:
             status_container.llava_caption = status_container.llava_captions[0]
             prompt_el = gr.update(value=status_container.llava_caption)
             print(f"LLaVA caption: {status_container.llava_caption}")
-        elif single_process:
+        elif not status_container.is_batch:
             print("Updating Single Output Image")
             # Update the slider with the outputs, hide the gallery
             try:
@@ -676,22 +647,16 @@ def llava_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], temp, p, q
     return f"LLaVA Processing Completed: {len(inputs)} images processed at {time.ctime()}."
 
 
-# img_data, captions, a_prompt, n_prompt, num_samples,
-# upscale, edm_steps,
-# s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
-# linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,
-# ckpt_select, num_images, random_seed, apply_llava, face_resolution, apply_bg, apply_face,
-#                                     face_prompt, outputs_folder, batch_process_folder
 def supir_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions, a_prompt, n_prompt, num_samples,
                   upscale, edm_steps,
-                  s_stage1, s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
+                  s_stage1, s_stage2, s_cfg, seed, sampler, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
                   linear_cfg, linear_s_stage2, spt_linear_cfg, spt_linear_s_stage2, model_select,
                   ckpt_select, num_images, random_seed, apply_llava, face_resolution, apply_bg, apply_face,
                   face_prompt, batch_process_folder, dont_update_progress=False, unload=True,
                   progress=gr.Progress()):
     global model, status_container, event_id
     main_begin_time = time.time()
-    load_model(model_select, ckpt_select, progress=progress)
+    load_model(model_select, ckpt_select, sampler, progress=progress)
     to_gpu(model, SUPIR_device)
     model.ae_dtype = convert_dtype(ae_dtype)
     model.model.dtype = convert_dtype(diff_dtype)
@@ -840,7 +805,7 @@ def supir_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions, 
                 samples = model.batchify_sample(lq, caption, num_steps=edm_steps, restoration_scale=s_stage1,
                                                 s_churn=s_churn,
                                                 s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
-                                                num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
+                                                sampler_cls=sampler, num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
                                                 color_fix_type=color_fix_type,
                                                 use_linear_cfg=linear_cfg, use_linear_control_scale=linear_s_stage2,
                                                 cfg_scale_start=spt_linear_cfg, control_scale_start=spt_linear_s_stage2)
@@ -893,7 +858,7 @@ def supir_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions, 
 
 
 def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1,
-                  s_stage2, s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, linear_CFG,
+                  s_stage2, s_cfg, seed, sampler, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, linear_CFG,
                   linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, ckpt_select, num_images,
                   random_seed,
                   apply_supir, face_resolution, apply_bg, apply_face, face_prompt, apply_llava,
@@ -902,6 +867,8 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
                   batch_process_folder, output_video_quality, output_video_format, progress=gr.Progress()):
     global is_processing, llava_agent, model, status_container
     ckpt_select = get_ckpt_path(ckpt_select)
+    tiled = "TiledRestore" if args.use_tile_vae else "Restore"
+    sampler_cls = f"sgm.modules.diffusionmodules.sampling.{tiled}{sampler}Sampler"
     if not ckpt_select:
         return "No checkpoint selected. Please select a checkpoint to continue."
     start_time = time.time()
@@ -917,10 +884,11 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
     # Disable llava for video...because...uh...yeah, video.
     if status_container.is_video:
         apply_llava = False
-
+    printt(f"Processing {total_images} images...", reset=True)
     if apply_llava:
-        print('Processing LLaVA')
+        printt('Processing LLaVA')
         last_result = llava_process(img_data, temperature, top_p, qs, unload=True, progress=progress)
+        printt('LLaVA processing completed')
         captions = status_container.llava_captions
         if auto_deload_llava:
             print("Clearing LLaVA...")
@@ -929,7 +897,7 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
         captions = [main_prompt] * total_images
 
     # Check for cancellation
-    if not is_processing:
+    if not is_processing and model is not None:
         model = model.to('cpu')
         model.move_to('cpu')
         return f"Batch Processing Completed: Cancelled at {time.ctime()}.", last_result
@@ -938,7 +906,7 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
         print("Processing images (Stage 2)")
         last_result = supir_process(img_data, captions, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1,
                                     s_stage2,
-                                    s_cfg, seed, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, linear_CFG,
+                                    s_cfg, seed, sampler_cls, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, linear_CFG,
                                     linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, ckpt_select,
                                     num_images, random_seed, apply_llava, face_resolution, apply_bg,
                                     apply_face,
@@ -1114,6 +1082,7 @@ And yes, it would certainly be nice if anything anybody stuck in a random readme
 not how the world works. MIT license means FREE FOR ANY PURPOSE, PERIOD.
 The service is a research preview ~~intended for non-commercial use only~~, subject to the model [License](https://github.com/Fanghua-Yu/SUPIR#MIT-1-ov-file) of SUPIR.
 """
+
 css_file = os.path.abspath(os.path.join(os.path.dirname(__file__), 'css', 'style.css'))
 
 js_file = os.path.abspath(os.path.join(os.path.dirname(__file__), 'javascript', 'demo.js'))
@@ -1235,6 +1204,8 @@ with block:
                                                     value=-1.0,
                                                     step=1.0)
                         seed_slider = gr.Slider(label="Seed", minimum=-1, maximum=2147483647, step=1, randomize=True)
+                        sampler_dropdown = gr.Dropdown(label="Sampler", choices=["EDM", "DPMPP2M"],
+                                                         value="DPMPP2M")
                         s_churn_slider = gr.Slider(label="S-Churn", minimum=0, maximum=40, value=5, step=1)
                         s_noise_slider = gr.Slider(label="S-Noise", minimum=1.0, maximum=1.1, value=1.003, step=0.001)
                     prompt_styles = list_styles()
@@ -1375,6 +1346,7 @@ with block:
         "s_stage2": s_stage2_slider,
         "s_cfg": s_cfg_slider,
         "seed": seed_slider,
+        "sampler": sampler_dropdown,
         "s_churn": s_churn_slider,
         "s_noise": s_noise_slider,
         "color_fix_type": color_fix_type_radio,

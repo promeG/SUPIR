@@ -1,4 +1,6 @@
 import os
+
+import psutil
 import torch
 import numpy as np
 import cv2
@@ -6,6 +8,7 @@ from PIL import Image
 from torch.nn.functional import interpolate
 from omegaconf import OmegaConf
 from sgm.util import instantiate_from_config
+from ui_helpers import printt
 
 
 def get_state_dict(d):
@@ -24,48 +27,45 @@ def load_state_dict(ckpt_path, location='cpu'):
     return state_dict
 
 
-def create_model(config_path):
+def create_SUPIR_model(config_path, supir_sign=None, device='cpu', ckpt=None, sampler="DPMPP2M"):
+    # Load the model configuration
     config = OmegaConf.load(config_path)
-    model = instantiate_from_config(config.model).cpu()
-    print(f'Loaded model config from [{config_path}]')
-    return model
-
-
-def create_SUPIR_model(config_path, supir_sign=None, device='cpu', ckpt=None):
-    config = OmegaConf.load(config_path)
+    config.model.params.sampler_config.target = sampler
     if ckpt:
         config.SDXL_CKPT = ckpt
+
+    # Instantiate model from config
+    printt(f'Loading model from [{config_path}]')
     model = instantiate_from_config(config.model)
-    # Move model to the specified device
-    model = model.to(device)
-    print(f'Loaded model config from [{config_path}] and moved to {device}')
+    printt(f'Loaded model from [{config_path}]')
 
-    if config.SDXL_CKPT is not None:
-        model.load_state_dict(load_state_dict(config.SDXL_CKPT), strict=False)
-    if config.SUPIR_CKPT is not None:
-        model.load_state_dict(load_state_dict(config.SUPIR_CKPT), strict=False)
-    if supir_sign is not None:
-        assert supir_sign in ['F', 'Q']
-        if supir_sign == 'F':
-            if not os.path.exists(config.SUPIR_CKPT_F):
-                full_path = os.path.abspath(os.path.join("..", "models", "SUPIR-v0F.ckpt"))
-                if os.path.exists(full_path):
-                    config.SUPIR_CKPT_F = full_path
-            model.load_state_dict(load_state_dict(config.SUPIR_CKPT_F), strict=False)
-        elif supir_sign == 'Q':
-            if not os.path.exists(config.SUPIR_CKPT_Q):
-                full_path = os.path.abspath(os.path.join("..", "models", "SUPIR-v0Q.ckpt"))
-                if os.path.exists(full_path):
-                    config.SUPIR_CKPT_Q = full_path
-            model.load_state_dict(load_state_dict(config.SUPIR_CKPT_Q), strict=False)
+    # Function to load state dict to the chosen device
+    def load_to_device(ckpt_path):
+        printt(f'Loading state_dict from [{ckpt_path}]')
+        if ckpt_path and os.path.exists(ckpt_path):
+            if torch.cuda.is_available():
+                tgt_device = 'cuda'
+            else:
+                tgt_device = 'cpu'
+            state_dict = load_state_dict(ckpt_path, tgt_device)
+            model.load_state_dict(state_dict, strict=False)
+            printt(f'Loaded state_dict from [{ckpt_path}]')
+        else:
+            printt(f'No checkpoint found at [{ckpt_path}]')
+
+    # Load state dicts as needed
+    load_to_device(config.get('SDXL_CKPT'))
+
+    # Handling SUPIR checkpoints based on the sign
+    if supir_sign:
+        assert supir_sign in ['F', 'Q'], "supir_sign must be either 'F' or 'Q'"
+        ckpt_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", f"v0{supir_sign}.ckpt"))
+        load_to_device(ckpt_path)
+
+    model.sampler = sampler
+    printt(f'Loaded model config from [{config_path}] and moved to {device}')
+
     return model
-
-
-def load_QF_ckpt(config_path, device='cpu'):
-    config = OmegaConf.load(config_path)
-    ckpt_F = torch.load(config.SUPIR_CKPT_F, map_location=device)
-    ckpt_Q = torch.load(config.SUPIR_CKPT_Q, map_location=device)
-    return ckpt_Q, ckpt_F
 
 
 def PIL2Tensor(img, upsacle=1, min_size=1024, fix_resize=None):
@@ -78,7 +78,7 @@ def PIL2Tensor(img, upsacle=1, min_size=1024, fix_resize=None):
     h *= upsacle
     w0, h0 = round(w), round(h)
     if min(w, h) < min_size:
-        _upsacle = min_size / min(w, h)
+        _upscale = min_size / min(w, h)
         w *= _upscale
         h *= _upscale
     if fix_resize is not None:

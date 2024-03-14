@@ -7,7 +7,9 @@ from typing import Dict, Union
 import torch
 from omegaconf import ListConfig, OmegaConf
 from tqdm import tqdm
+import gradio as gr
 
+from ui_helpers import printt
 from ...modules.diffusionmodules.sampling_utils import (
     get_ancestral_step,
     linear_multistep_coeff,
@@ -492,7 +494,8 @@ class RestoreDPMPP2MSampler(DPMPP2MSampler):
         noise_sampler = BrownianTreeNoiseSampler(x, sigmas_min, sigmas_max)
 
         old_denoised = None
-        for i in self.get_sigma_gen(num_sigmas):
+        progress = gr.Progress(track_tqdm=True)
+        for _idx, i in progress.tqdm(enumerate(self.get_sigma_gen(num_sigmas)), total=num_sigmas, desc="Sampling"):
             if i > 0 and torch.sum(s_in * sigmas[i + 1]) > 1e-14:
                 eps_noise = noise_sampler(s_in * sigmas[i], s_in * sigmas[i + 1])
             else:
@@ -573,7 +576,8 @@ class RestoreEDMSampler(SingleStepDiffusionSampler):
             x, cond, uc, num_steps
         )
 
-        for _idx, i in enumerate(self.get_sigma_gen(num_sigmas)):
+        progress = gr.Progress(track_tqdm=True)
+        for _idx, i in progress.tqdm(enumerate(self.get_sigma_gen(num_sigmas)), total=num_sigmas, desc="Sampling"):
             gamma = (
                 min(self.s_churn / (num_sigmas - 1), 2 ** 0.5 - 1)
                 if self.s_tmin <= sigmas[i] <= self.s_tmax
@@ -618,7 +622,8 @@ class TiledRestoreEDMSampler(RestoreEDMSampler):
             x, cond, uc, num_steps
         )
 
-        for _idx, i in enumerate(self.get_sigma_gen(num_sigmas)):
+        progress = gr.Progress(track_tqdm=True)
+        for _idx, i in progress.tqdm(enumerate(self.get_sigma_gen(num_sigmas)), total=num_sigmas, desc="Sampling"):
             gamma = (
                 min(self.s_churn / (num_sigmas - 1), 2 ** 0.5 - 1)
                 if self.s_tmin <= sigmas[i] <= self.s_tmax
@@ -666,6 +671,7 @@ class TiledRestoreDPMPP2MSampler(RestoreDPMPP2MSampler):
         self.tile_weights = gaussian_weights(self.tile_size, self.tile_size, 1)
 
     def __call__(self, denoiser, x, cond, uc=None, num_steps=None, control_scale=1.0, **kwargs):
+        printt("TiledRestoreDPMPP2MSampler")
         use_local_prompt = isinstance(cond, list)
         b, _, h, w = x.shape
         latent_tiles_iterator = _sliding_windows(h, w, self.tile_size, self.tile_stride)
@@ -685,7 +691,8 @@ class TiledRestoreDPMPP2MSampler(RestoreDPMPP2MSampler):
         noise_sampler = BrownianTreeNoiseSampler(x, sigmas_min, sigmas_max)
 
         old_denoised = None
-        for _idx, i in enumerate(self.get_sigma_gen(num_sigmas)):
+        progress = gr.Progress(track_tqdm=True)
+        for _idx, i in progress.tqdm(enumerate(self.get_sigma_gen(num_sigmas)), total=num_sigmas, desc="Sampling"):
             if i > 0 and torch.sum(s_in * sigmas[i + 1]) > 1e-14:
                 eps_noise = noise_sampler(s_in * sigmas[i], s_in * sigmas[i + 1])
             else:

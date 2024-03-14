@@ -15,9 +15,13 @@ from ui_helpers import printt
 class SUPIRModel(DiffusionEngine):
     def __init__(self, control_stage_config, ae_dtype='bf16', diffusion_dtype='bf16', p_p='', n_p='', *args, **kwargs):
         super().__init__(*args, **kwargs)
+        printt("Loading control model.")
         control_model = instantiate_from_config(control_stage_config)
+        printt("Instantiated control model.")
         self.model.load_control_model(control_model)
+        printt("Loaded control model.")
         self.first_stage_model.denoise_encoder = copy.deepcopy(self.first_stage_model.encoder)
+        printt("Copied denoise encoder.")
         self.sampler_config = kwargs['sampler_config']
         self.previous_sampler_config = None  # Store the previous sampler configuration
         self.sampler = None  # Initialize sampler as None
@@ -28,7 +32,6 @@ class SUPIRModel(DiffusionEngine):
             raise RuntimeError('fp16 cause NaN in AE')
         elif ae_dtype == 'bf16':
             ae_dtype = torch.bfloat16
-
         if diffusion_dtype == 'fp32':
             diffusion_dtype = torch.float32
         elif diffusion_dtype == 'fp16':
@@ -46,23 +49,17 @@ class SUPIRModel(DiffusionEngine):
     def encode_first_stage(self, x):
         with torch.autocast("cuda", dtype=self.ae_dtype):
             z = self.first_stage_model.encode(x)
-        z = self.scale_factor * z
+        z.mul_(self.scale_factor)  # In-place multiplication
         return z
 
     @torch.no_grad()
     def encode_first_stage_with_denoise(self, x, use_sample=True, is_stage1=False):
         with torch.autocast("cuda", dtype=self.ae_dtype):
-            if is_stage1:
-                h = self.first_stage_model.denoise_encoder_s1(x)
-            else:
-                h = self.first_stage_model.denoise_encoder(x)
+            h = self.first_stage_model.denoise_encoder_s1(x) if is_stage1 else self.first_stage_model.denoise_encoder(x)
             moments = self.first_stage_model.quant_conv(h)
             posterior = DiagonalGaussianDistribution(moments)
-            if use_sample:
-                z = posterior.sample()
-            else:
-                z = posterior.mode()
-        z = self.scale_factor * z
+            z = posterior.sample() if use_sample else posterior.mode()
+        z.mul_(self.scale_factor)  # In-place multiplication
         return z
 
     @torch.no_grad()
@@ -85,12 +82,14 @@ class SUPIRModel(DiffusionEngine):
                         s_noise=1.003, cfg_scale=4.0, seed=-1,
                         num_samples=1, control_scale=1, color_fix_type='None', use_linear_cfg=False,
                         use_linear_control_scale=False,
-                        cfg_scale_start=1.0, control_scale_start=0.0, **kwargs):
+                        cfg_scale_start=1.0, control_scale_start=0.0, sampler_cls=None, **kwargs):
         """
         [N, C], [-1, 1], RGB
         """
         assert len(x) == len(p)
         assert color_fix_type in ['Wavelet', 'AdaIn', 'None']
+        if not sampler_cls:
+            sampler_cls = f"sgm.modules.diffusionmodules.sampling.RestoreDPMPP2MSampler"
 
         n = len(x)
         if num_samples > 1:
@@ -103,62 +102,70 @@ class SUPIRModel(DiffusionEngine):
             p_p = self.p_p
         if n_p == 'default':
             n_p = self.n_p
-
-        # Update sampler configuration
         new_sampler_config = {
-            'num_steps': num_steps,
-            'restore_cfg': restoration_scale,
-            's_churn': s_churn,
-            's_noise': s_noise,
-            'cfg_scale': (cfg_scale, cfg_scale_start) if use_linear_cfg else cfg_scale,
+            "target": sampler_cls,
+            "params": {
+                "num_steps": num_steps,
+                "restore_cfg": restoration_scale,
+                "s_churn": s_churn,
+                "s_noise": s_noise,
+                "discretization_config": {
+                    "target": "sgm.modules.diffusionmodules.discretizer.LegacyDDPMDiscretization"
+                },
+                "guider_config": {
+                    "target": "sgm.modules.diffusionmodules.guiders.LinearCFG",
+                    "params": {
+                        "scale": cfg_scale_start if use_linear_cfg else cfg_scale,
+                        "scale_min": cfg_scale
+                    }
+                }
+            }
         }
 
+        # Update sampler configuration
         # Check if the sampler needs to be re-instantiated
         if self.previous_sampler_config != new_sampler_config or self.sampler is None:
-            self.sampler_config.params.num_steps = num_steps
-            if use_linear_cfg:
-                self.sampler_config.params.guider_config.params.scale_min = cfg_scale
-                self.sampler_config.params.guider_config.params.scale = cfg_scale_start
-            else:
-                self.sampler_config.params.guider_config.params.scale_min = cfg_scale
-                self.sampler_config.params.guider_config.params.scale = cfg_scale
-            self.sampler_config.params.restore_cfg = restoration_scale
-            self.sampler_config.params.s_churn = s_churn
-            self.sampler_config.params.s_noise = s_noise
-            printt("Instantiating sampler...")
+            self.sampler_config = new_sampler_config
+            printt("Instantiating sampler.")
+            del self.sampler
             self.sampler = instantiate_from_config(self.sampler_config)
             self.previous_sampler_config = new_sampler_config
+            printt("Instantiated sampler.")
 
         if seed == -1:
             seed = random.randint(0, 65535)
         seed_everything(seed)
 
+        printt("Encoding first stage with denoise...")
         _z = self.encode_first_stage_with_denoise(x, use_sample=False)
+        printt("Encoded first stage with denoise...")
         x_stage1 = self.decode_first_stage(_z)
+        printt("Decoded first stage...")
         z_stage1 = self.encode_first_stage(x_stage1)
+        printt("Encoded first stage...")
 
         c, uc = self.prepare_condition(_z, p, p_p, n_p, n)
 
-        printt("Loading denoiser??")
+        printt("Loading denoiser.")
         denoiser = lambda input, sigma, c, control_scale: self.denoiser(
             self.model, input, sigma, c, control_scale, **kwargs
         )
-        printt("Loaded denoiser??")
+        printt("Loaded denoiser.")
 
         noised_z = torch.randn_like(_z).to(_z.device)
         printt("Sampling...")
         _samples = self.sampler(denoiser, noised_z, cond=c, uc=uc, x_center=z_stage1, control_scale=control_scale,
                                 use_linear_control_scale=use_linear_control_scale,
                                 control_scale_start=control_scale_start)
-        printt("Sampled??")
+        printt("Sampled.")
         output = self.decode_first_stage(_samples)
-        printt("Decoded??")
+        printt("Decoded output.")
         if color_fix_type == 'Wavelet':
             output = wavelet_reconstruction(output, x_stage1)
-            printt("Wavelet??")
+            printt("Wavelet reconstructed.")
         elif color_fix_type == 'AdaIn':
             output = adaptive_instance_normalization(output, x_stage1)
-            printt("AdaIn??")
+            printt("AdaIn reconstructed.")
         return output
 
     def init_tile_vae(self, encoder_tile_size=512, decoder_tile_size=64, use_fast=False):
