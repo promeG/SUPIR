@@ -125,19 +125,19 @@ def refresh_styles_click():
     return gr.update(choices=style_list)
 
 
-def select_style(style_name, values=False):
+def select_style(style_name, current_prompt=None, values=False):
     print(f"Selected style: {style_name}")
     style_list = list_styles()
     print(f"Selected style: {style_name}")
 
     if style_name in style_list.keys():
-        style_pos, style_neg = style_list[style_name]
+        style_pos, style_neg, style_llava = style_list[style_name]
         if values:
-            return style_pos, style_neg
-        return gr.update(value=style_pos), gr.update(value=style_neg)
+            return style_pos, style_neg, style_llava
+        return gr.update(value=style_pos), gr.update(value=style_neg), gr.update(value=style_llava)
     if values:
-        return "", ""
-    return gr.update(value=""), gr.update(value="")
+        return "", "", ""
+    return gr.update(value=""), gr.update(value=""), gr.update(value="")
 
 
 def open_folder():
@@ -185,6 +185,7 @@ def list_styles():
     styles_path = os.path.join(os.path.dirname(__file__), 'styles')
     output = {}
     style_files = []
+    llava_prompt = default_llava_prompt
     for root, dirs, files in os.walk(styles_path):
         for file in files:
             if file.endswith('.csv'):
@@ -199,7 +200,7 @@ def list_styles():
                     name = line.split(',')[0]
                     cap_line = line.replace(name + ',', '')
                     captions = cap_line.split('","')
-                    if len(captions) == 2:
+                    if len(captions) >= 2:
                         positive_prompt = captions[0].replace('"', '')
                         negative_prompt = captions[1].replace('"', '')
                         if "{prompt}" in positive_prompt:
@@ -208,7 +209,11 @@ def list_styles():
                         if "{prompt}" in negative_prompt:
                             negative_prompt = negative_prompt.replace("{prompt}", "")
 
-                        output[name] = (positive_prompt, negative_prompt)
+                        if len(captions) == 3:
+                            llava_prompt = captions[2].replace('"', "")
+
+                        output[name] = (positive_prompt, negative_prompt, llava_prompt)
+
     return output
 
 
@@ -1187,6 +1192,13 @@ def show_output(selected_file):
     else:
         return gr.update(visible=False), gr.update(visible=False)
 
+default_llava_prompt = "Describe this image and its style in a very detailed manner. The image is a realistic photography, not an art painting."
+prompt_styles = list_styles()
+# Make a list of prompt_styles keys
+prompt_styles_keys = list(prompt_styles.keys())
+
+selected_pos, selected_neg, llava_style_prompt = select_style(
+                            prompt_styles_keys[0] if len(prompt_styles_keys) > 0 else "", default_llava_prompt,True)
 
 block = gr.Blocks(title='SUPIR', theme=args.theme, css=css_file, head=head).queue()
 
@@ -1251,6 +1263,13 @@ with block:
                     with gr.Row(visible=show_select):
                         ckpt_type = gr.Dropdown(label="Checkpoint Type", choices=["Standard SDXL", "SDXL Lightning"],
                                                 value="Standard SDXL")
+                    with gr.Row(elem_id="style_select_row"):
+                        prompt_style_dropdown = gr.Dropdown(label="Default Prompt Style",
+                                                            choices=prompt_styles_keys,
+                                                            value=prompt_styles_keys[0] if len(
+                                                                prompt_styles_keys) > 0 else "")
+                        refresh_styles_button = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"],
+                                                          size="sm")
 
                     upscale_slider = gr.Slider(label="Upscale Size", minimum=1, maximum=8, value=1, step=0.1)
                     prompt_textbox = gr.Textbox(label="Prompt", value="")
@@ -1265,8 +1284,7 @@ with block:
                     temperature_slider = gr.Slider(label="Temperature", minimum=0., maximum=1.0, value=0.2, step=0.1)
                     top_p_slider = gr.Slider(label="Top P", minimum=0., maximum=1.0, value=0.7, step=0.1)
                     qs_textbox = gr.Textbox(label="Question",
-                                            value="Describe this image and its style in a very detailed manner. "
-                                                  "The image is a realistic photography, not an art painting.")
+                                            value=llava_style_prompt)
                 with gr.Accordion("SUPIR options", open=False):
                     with gr.Row():
                         with gr.Column():
@@ -1290,20 +1308,8 @@ with block:
                                                        value="DPMPP2M")
                         s_churn_slider = gr.Slider(label="S-Churn", minimum=0, maximum=40, value=5, step=1)
                         s_noise_slider = gr.Slider(label="S-Noise", minimum=1.0, maximum=1.1, value=1.003, step=0.001)
-                    prompt_styles = list_styles()
-                    # Make a list of prompt_styles keys
-                    prompt_styles_keys = list(prompt_styles.keys())
 
-                    with gr.Row(elem_id="style_select_row"):
-                        prompt_style_dropdown = gr.Dropdown(label="Default Prompt Style",
-                                                            choices=prompt_styles_keys,
-                                                            value=prompt_styles_keys[0] if len(
-                                                                prompt_styles_keys) > 0 else "")
-                        refresh_styles_button = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"],
-                                                          size="sm")
                     with gr.Row():
-                        selected_pos, selected_neg = select_style(
-                            prompt_styles_keys[0] if len(prompt_styles_keys) > 0 else "", True)
                         a_prompt_textbox = gr.Textbox(label="Default Positive Prompt",
                                                       value=selected_pos)
                         n_prompt_textbox = gr.Textbox(label="Default Negative Prompt",
@@ -1481,8 +1487,8 @@ with block:
 
     output_files.change(fn=show_output, inputs=[output_files], outputs=[output_image, output_video])
 
-    prompt_style_dropdown.change(fn=select_style, inputs=[prompt_style_dropdown],
-                                 outputs=[a_prompt_textbox, n_prompt_textbox])
+    prompt_style_dropdown.change(fn=select_style, inputs=[prompt_style_dropdown, qs_textbox],
+                                 outputs=[a_prompt_textbox, n_prompt_textbox, qs_textbox])
 
     make_comparison_video_checkbox.change(fn=toggle_compare_elements, inputs=[make_comparison_video_checkbox],
                                           outputs=[comparison_video_col, compare_video_row, comparison_video])
