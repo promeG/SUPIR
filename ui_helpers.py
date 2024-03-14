@@ -1,17 +1,16 @@
 import json
-import time
-
-import gradio as gr
 import os
-from typing import List, Dict
-import subprocess
 import re
-import filetype
+import subprocess
+from typing import List, Dict, Union
 
+import filetype
+import gradio as gr
 from ffmpeg_progress_yield import FfmpegProgress
 from tqdm import tqdm
 
 from SUPIR.perf_timer import PerfTimer
+from SUPIR.utils.status_container import MediaData
 
 
 def is_video(video_path: str) -> bool:
@@ -47,6 +46,9 @@ def detect_hardware_acceleration() -> (str, str, str):
 
 
 def extract_video(video_path: str, output_path: str, quality: int = 100, format: str = 'png') -> (bool, Dict[str, str]):
+    # Extract video parameters from the original video
+    video_params = get_video_params(video_path)
+
     # Determine the scale factor based on quality (100 being the best quality)
     scale = f"scale=iw*{quality / 100}:-1"
 
@@ -62,7 +64,11 @@ def extract_video(video_path: str, output_path: str, quality: int = 100, format:
     output_path_with_format = f"{output_path}/%05d.{format}"
 
     # Construct ffmpeg command with quality, format, and potential hardware acceleration
-    commands = ['-hwaccel', hw_acceleration, '-i', video_path, '-vf', f"{scale},fps=1", '-c:v', codec]
+    commands = ['-hwaccel', hw_acceleration, '-i', video_path, '-vf', scale, '-c:v', codec]
+
+    # If framerate information is available, use it in the command
+    if 'framerate' in video_params:
+        commands.insert(-2, f"fps=fps={video_params['framerate']}")  # Insert before '-c:v' argument
 
     # Ensure the pixel format is appropriate for the output format
     if format.lower() == 'png':
@@ -74,9 +80,6 @@ def extract_video(video_path: str, output_path: str, quality: int = 100, format:
         commands.extend(['-qscale:v', str(quality)])
 
     commands.append(output_path_with_format)
-
-    # Extract video parameters from the original video
-    video_params = get_video_params(video_path)
 
     # Update video_params based on the scale (quality adjustment) and format
     video_params['format'] = format
@@ -112,7 +115,7 @@ def get_video_params(video_path: str) -> Dict[str, str]:
 
 
 def compile_video(src_path, output_path, video_params: Dict[str, str], quality: int = 23,
-                  file_type: str = 'mp4') -> bool:
+                  file_type: str = 'mp4') -> Union[MediaData, bool]:
     # Determine the codec and hardware acceleration settings
     hw_acceleration, hw_decoder, hw_encoder = detect_hardware_acceleration()
     codec = hw_encoder if hw_encoder else 'libx264'
@@ -133,7 +136,12 @@ def compile_video(src_path, output_path, video_params: Dict[str, str], quality: 
     if 'width' in video_params and 'height' in video_params:
         commands += ['-vf', f"scale={video_params['width']}:{video_params['height']}"]
 
-    return run_ffmpeg_progress(commands)
+    # If video is compiled successfully, update status_container with the output path
+    if run_ffmpeg_progress(commands):
+        image_data = MediaData(src_path, 'video')
+        image_data.outputs = [output_path_with_type]
+        return image_data
+    return False
 
 
 def run_ffmpeg_progress(args: List[str], progress=gr.Progress()):

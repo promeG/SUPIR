@@ -3,6 +3,7 @@ import datetime
 import os
 import shutil
 import tempfile
+import threading
 import time
 import traceback
 from datetime import datetime
@@ -23,7 +24,7 @@ from SUPIR.util import create_SUPIR_model
 from SUPIR.utils.compare import create_comparison_video
 from SUPIR.utils.face_restoration_helper import FaceRestoreHelper
 from SUPIR.utils.model_fetch import get_model
-from SUPIR.utils.status_container import StatusContainer
+from SUPIR.utils.status_container import StatusContainer, MediaData
 from llava.llava_agent import LLavaAgent
 import ui_helpers
 from ui_helpers import is_video, extract_video, compile_video, is_image, get_video_params, printt
@@ -259,7 +260,8 @@ def load_model(selected_model, selected_checkpoint, sampler='DPMPP2M', device='c
         torch.cuda.empty_cache()
         last_used_checkpoint = checkpoint_use
         model_cfg = "options/SUPIR_v0_tiled.yaml" if args.use_tile_vae else "options/SUPIR_v0.yaml"
-        model = create_SUPIR_model(model_cfg, supir_sign=selected_model[-1], device=device, ckpt=checkpoint_use, sampler=sampler)
+        model = create_SUPIR_model(model_cfg, supir_sign=selected_model[-1], device=device, ckpt=checkpoint_use,
+                                   sampler=sampler)
         model.current_model = selected_model
         if args.loading_half_params:
             model = model.half()
@@ -277,6 +279,19 @@ def load_llava():
                                  load_4bit=args.load_4bit_llava)
 
 
+def unload_llava():
+    global llava_agent
+    if args.load_4bit_llava or args.load_8bit_llava:
+        printt("Clearing LLaVA.")
+        clear_llava()
+        printt("LLaVA cleared.")
+    else:
+        printt("Unloading LLaVA.")
+        llava_agent = llava_agent.to('cpu')
+        torch.cuda.empty_cache()
+        printt("LLaVA unloaded.")
+
+
 def clear_llava():
     global llava_agent
     del llava_agent
@@ -284,15 +299,24 @@ def clear_llava():
     torch.cuda.empty_cache()
 
 
-def all_to_cpu():
+def all_to_cpu_background():
     global face_helper, model, llava_agent
+    printt("Moving all to CPU")
     if face_helper is not None:
         face_helper = face_helper.to('cpu')
+        printt("Face helper moved to CPU")
     if model is not None:
         model = model.to('cpu')
         model.move_to('cpu')
+        printt("Model moved to CPU")
     if llava_agent is not None:
-        llava_agent = llava_agent.to('cpu')
+        unload_llava()
+    printt("All moved to CPU")
+
+
+def all_to_cpu():
+    cpu_thread = threading.Thread(target=all_to_cpu_background)
+    cpu_thread.start()
 
 
 def to_gpu(elem_to_load, device):
@@ -347,7 +371,6 @@ def update_inputs(input_file, upscale_amount):
     image_input = gr.update(visible=False)
     video_input = gr.update(visible=False)
     res_output = gr.update(value="")
-
     if is_image(input_file):
         image_input = gr.update(visible=True, value=input_file)
         file_input = gr.update(visible=False)
@@ -431,50 +454,58 @@ def update_elements(status_label):
     prompt_el = gr.update()
     result_gallery_el = gr.update(height=400)
     result_slider_el = gr.update(height=400)
-    comparison_video_el = gr.update(height=400)
-    event_id_el = gr.update()
-    fb_score_el = gr.update()
-    fb_text_el = gr.update()
-    seed_el = gr.update()
-    face_gallery_el = gr.update()
+    result_video_el = gr.update(height=400)
+    comparison_video_el = gr.update(height=400, visible=False)
+    seed = None
+    face_gallery_items = []
+    evt_id = ""
+    if not is_processing:
+        output_data = status_container.image_data
+        if len(output_data) == 1:
+            image_data = output_data[0]
+            caption = image_data.caption
+            print(f"Caption: {caption}")
+            prompt_el = gr.update(value=caption)
+            if len(image_data.outputs) > 0:
+                outputs = image_data.outputs
+                params = image_data.metadata_list
+                if len(params) != len(outputs):
+                    print("Mismatch in outputs and metadata list, using defaults.")
+                    params = [status_container.process_params] * len(outputs)
+                first_output = outputs[0]
+                first_params = params[0]
+                seed = first_params.get('seed', "")
+                face_gallery_items = first_params.get('face_gallery', [])
+                evt_id = first_params.get('event_id', "")
+                if image_data.media_type == "image":
+                    if image_data.comparison_video:
+                        comparison_video_el = gr.update(value=image_data.comparison_video, visible=True)
+                    result_slider_el = gr.update(value=[image_data.media_path, first_output], visible=True)
+                    result_gallery_el = gr.update(value=None, visible=False)
+                    result_video_el = gr.update(value=None, visible=False)
+                elif image_data.media_type == "video":
+                    prompt_el = gr.update(value="")
+                    result_video_el = gr.update(value=first_output, visible=True)
+                    result_gallery_el = gr.update(value=None, visible=False)
+                    result_slider_el = gr.update(value=None, visible=False)
+        elif len(output_data) > 1:
+            first_output_data = output_data[0]
+            if len(first_output_data.outputs):
+                first_params = first_output_data.metadata_list[0] if first_output_data.metadata_list else status_container.process_params
+                seed = first_params.get('seed', "")
+                face_gallery_items = first_params.get('face_gallery', [])
+                evt_id = first_params.get('event_id', "")
+            all_outputs = []
+            for output_data in output_data:
+                all_outputs.extend(output_data.outputs)
+            result_gallery_el = gr.update(value=all_outputs, visible=True)
+            result_slider_el = gr.update(value=None, visible=False)
+            result_video_el = gr.update(value=None, visible=False)
+    seed_el = gr.update(value=seed)
+    event_id_el = gr.update(value=evt_id)
+    face_gallery_el = gr.update(value=face_gallery_items)
 
-    if "Completed" in status_label:
-        print(status_label)
-        if "LLaVA" in status_label:
-            status_container.llava_caption = status_container.llava_captions[0]
-            prompt_el = gr.update(value=status_container.llava_caption)
-            print(f"LLaVA caption: {status_container.llava_caption}")
-        elif not status_container.is_batch:
-            print("Updating Single Output Image")
-            # Update the slider with the outputs, hide the gallery
-            try:
-                status_container.llava_caption = status_container.llava_captions[0]
-                if len(status_container.llava_caption) > 2:
-                    prompt_el = gr.update(value=status_container.llava_caption)
-            except:
-                pass
-            result_slider_el = gr.update(value=status_container.result_gallery, visible=True,
-                                         elem_classes=["active", "preview_slider", "preview_box"])
-            result_gallery_el = gr.update(visible=False, value=None, elem_classes=["preview_box"])
-            event_id_el = gr.update(value=status_container.event_id)
-            fb_score_el = gr.update(value=status_container.fb_score)
-            fb_text_el = gr.update(value=status_container.fb_text)
-            seed_el = gr.update(value=status_container.seed)
-            face_gallery_el = gr.update(value=status_container.face_gallery)
-            comparison_video_el = gr.update(value=status_container.comparison_video)
-        else:
-            print("Updating Batch Outputs")
-            result_gallery_el = gr.update(value=status_container.result_gallery, visible=True,
-                                          elem_classes=["active", "preview_box"])
-            result_slider_el = gr.update(visible=False, value=None, elem_classes=["preview_slider", "preview_box"])
-            event_id_el = gr.update(value=status_container.event_id)
-            fb_score_el = gr.update(value=status_container.fb_score)
-            fb_text_el = gr.update(value=status_container.fb_text)
-            seed_el = gr.update(value=status_container.seed)
-            face_gallery_el = gr.update(value=status_container.face_gallery)
-            comparison_video_el = gr.update(value=status_container.comparison_video)
-    return (prompt_el, result_gallery_el, result_slider_el, event_id_el, fb_score_el,
-            fb_text_el, seed_el, face_gallery_el, comparison_video_el)
+    return prompt_el, result_gallery_el, result_slider_el, result_video_el, comparison_video_el, event_id_el, seed_el, face_gallery_el
 
 
 def populate_slider_single():
@@ -523,6 +554,7 @@ def start_single_process(*element_values):
     status_container.is_batch = False
     values_dict = zip(elements_dict.keys(), element_values)
     values_dict = dict(values_dict)
+    main_prompt = values_dict['main_prompt']
     # Delete input_image, prompt, batch_process_folder, outputs_folder from values_dict
 
     input_image = values_dict['src_file']
@@ -532,7 +564,7 @@ def start_single_process(*element_values):
     image_files = [input_image]
 
     # Make a dictionary to store the image data and path
-    img_data = {}
+    img_data = []
 
     if is_video(input_image):
         status_container.is_video = True
@@ -545,19 +577,29 @@ def start_single_process(*element_values):
             status_container.video_params = video_params
         for file in os.listdir(extracted_folder):
             full_path = os.path.join(extracted_folder, file)
-            # Don't open the image, because there will probably be a LOT
-            img_data[full_path] = None
+            media_data = MediaData(media_path=full_path)
+            media_data.caption = main_prompt
+            img_data.append(media_data)
     else:
         for file in image_files:
             try:
+                media_data = MediaData(media_path=file)
                 img = Image.open(file)
-                img_data[file] = np.array(img)
+                media_data.media_data = np.array(img)
+                media_data.caption = main_prompt
+                img_data.append(media_data)
             except:
                 pass
     result = "An exception occurred. Please try again."
+    # auto_deload_llava, batch_process_folder, main_prompt, output_video_format, output_video_quality, outputs_folder,video_duration, video_fps, video_height, video_width
+    keys_to_pop = ['auto_deload_llava', 'batch_process_folder', 'main_prompt', 'output_video_format',
+                   'output_video_quality', 'outputs_folder', 'video_duration', 'video_fps', 'video_height',
+                   'video_width', 'src_file']
 
-    values_dict = {k: v for k, v in values_dict.items() if k not in ['src_file']}
     values_dict['outputs_folder'] = args.outputs_folder
+    status_container.process_params = values_dict
+    values_dict = {k: v for k, v in values_dict.items() if k not in keys_to_pop}
+
     try:
         _, result = batch_process(img_data, **values_dict)
     except Exception as e:
@@ -574,6 +616,7 @@ def start_batch_process(element_values: List[Any]):
     batch_process_folder = values_dict['batch_process_folder']
     outputs_folder = values_dict['outputs_folder']
     values_dict = {k: v for k, v in values_dict if k not in ['src_file']}
+    main_prompt = values_dict['main_prompt']
     if not batch_process_folder:
         return "No input folder provided."
     if not os.path.exists(batch_process_folder):
@@ -585,18 +628,26 @@ def start_batch_process(element_values: List[Any]):
     image_files = [file for file in os.listdir(batch_process_folder) if is_image(file)]
 
     # Make a dictionary to store the image data and path
-    img_data = {}
+    img_data = []
     for file in image_files:
+        media_data = MediaData(media_path=os.path.join(batch_process_folder, file))
         img = Image.open(os.path.join(batch_process_folder, file))
-        img_data[file] = np.array(img)
+        media_data.media_data = np.array(img)
+        media_data.caption = main_prompt
+        img_data.append(media_data)
 
     # Store it globally
     status_container.image_data = img_data
     result = "An exception occurred. Please try again."
     try:
-        values_dict = {k: v for k, v in values_dict if
-                       k not in ['input_image', 'batch_process_folder']}
-        values_dict["outputs_folder"] = outputs_folder
+        keys_to_pop = ['auto_deload_llava', 'batch_process_folder', 'main_prompt', 'output_video_format',
+                       'output_video_quality', 'outputs_folder', 'video_duration', 'video_fps', 'video_height',
+                       'video_width', 'src_file']
+
+        status_container.outputs_folder = outputs_folder
+        status_container.process_params = values_dict
+
+        values_dict = {k: v for k, v in values_dict if k not in keys_to_pop}
         result, _ = batch_process(img_data, **values_dict)
     except Exception as e:
         print(f"An exception occurred: {e} at {traceback.format_exc()}")
@@ -604,91 +655,89 @@ def start_batch_process(element_values: List[Any]):
     return result
 
 
-def llava_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], temp, p, question=None, unload=True,
-                  progress=gr.Progress()):
+def llava_process(inputs: List[MediaData], temp, p, question=None, save_captions=False, progress=gr.Progress()):
     global llava_agent, status_container
-    output_captions = []
-    status_container.llava_captions = []
-    total_steps = len(inputs.keys()) + (2 if unload else 1)
-    step = 1
-    if progress is not None:
-        progress(step / total_steps, desc="Loading LLaVA...")
+    outputs = []
+    total_steps = len(inputs) + 1
+    step = 0
+    progress(step / total_steps, desc="Loading LLaVA...")
     load_llava()
-    print("LLaVA loaded.")
+    step += 1
+    printt("Moving LLaVA to GPU.")
     llava_agent = to_gpu(llava_agent, LLaVA_device)
-    print("LLaVA moved to GPU.")
-    if progress is not None:
-        progress(step / total_steps, desc="LLaVA loaded, captioning images...")
-    for img_path, img in inputs.items():
-        if progress is not None:
-            progress(step / total_steps, desc=f"Processing image {step}/{len(inputs)} with LLaVA...")
+    printt("LLaVA moved to GPU.")
+    progress(step / total_steps, desc="LLaVA loaded, captioning images...")
+    for md in inputs:
+        img = md.media_data
+        img_path = md.media_path
+        progress(step / total_steps, desc=f"Processing image {step}/{len(inputs)} with LLaVA...")
         lq = HWC3(img)
         lq = Image.fromarray(lq.astype('uint8'))
-        captions = llava_agent.gen_image_caption([lq], temperature=temp, top_p=p, qs=question)
-        output_captions.append(captions[0])
-        status_container.llava_caption = captions[0]
-        step += 1
+        caption = llava_agent.gen_image_caption([lq], temperature=temp, top_p=p, qs=question)
+        caption = caption[0]
+        md.caption = caption
+        outputs.append(md)
+        if save_captions:
+            cap_path = os.path.splitext(img_path)[0] + ".txt"
+            with open(cap_path, 'w') as cf:
+                cf.write(caption)
         if not is_processing:  # Check if batch processing has been stopped
             break
-    if unload:
-        if progress is not None:
-            progress(step / total_steps, desc="Unloading LLaVA...")
-        if args.load_4bit_llava or args.load_8bit_llava:
-            print("Clearing LLaVA...")
-            clear_llava()
-        else:
-            print("Unloading LLaVA...")
-            llava_agent = llava_agent.to('cpu')
-        print("LLaVA unloaded.")
-        if progress is not None:
-            step += 1
-            progress(step / total_steps, desc="LLaVA processing completed.")
-    status_container.llava_captions = output_captions
+        step += 1
+
+    progress(step / total_steps, desc="LLaVA processing completed.")
+    status_container.image_data = outputs
     return f"LLaVA Processing Completed: {len(inputs)} images processed at {time.ctime()}."
 
 
-def supir_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions, a_prompt, n_prompt, num_samples,
+def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
                   upscale, edm_steps,
                   s_stage1, s_stage2, s_cfg, seed, sampler, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
                   linear_cfg, linear_s_stage2, spt_linear_cfg, spt_linear_s_stage2, model_select,
                   ckpt_select, num_images, random_seed, apply_llava, face_resolution, apply_bg, apply_face,
-                  face_prompt, batch_process_folder, dont_update_progress=False, unload=True,
+                  face_prompt, dont_update_progress=False, unload=True,
                   progress=gr.Progress()):
     global model, status_container, event_id
     main_begin_time = time.time()
+    total_images = len(inputs) * num_images
+    total_progress = total_images + 1
+    if unload:
+        total_progress += 1
+    counter = 0
+    progress(counter / total_progress, desc="Loading SUPIR Model...")
     load_model(model_select, ckpt_select, sampler, progress=progress)
     to_gpu(model, SUPIR_device)
+
+    counter += 1
+    progress(counter / total_progress, desc="Model Loaded, Processing Images...")
     model.ae_dtype = convert_dtype(ae_dtype)
     model.model.dtype = convert_dtype(diff_dtype)
 
-    save_output_immediately = False
-    if status_container.is_video:
-        num_images = 1
-        save_output_immediately = True
-
     idx = 0
+    output_data = []
+    processed_images = 0
+    params = status_container.process_params
 
-    output_data = {}
-    event_data = {}
-    counter = 1
-    all_results = []
-    total_images = len(inputs.items()) * num_images
-    for image_path, img in inputs.items():
+    for image_data in inputs:
+        gen_params_list = []
+        img_params = params.copy()
+        img = image_data.media_data
+        image_path = image_data.media_path
+        progress(counter / total_progress, desc=f"Processing image {counter}/{total_images}...")
         if img is None:
             printt(f"Image {counter}/{total_images} is None, loading from disk.")
             with Image.open(image_path) as img:
                 img = np.array(img)
+
         printt(f"Processing image {counter}/{total_images}...")
 
-        output_data[image_path] = []
-        event_data[image_path] = {}
-
-        number_of_images_results = []
-        img_prompt = captions[idx]
+        # Prompt is stored directly in the image data
+        img_prompt = image_data.caption
         idx = idx + 1
 
+        # See if there is a caption file
         if not apply_llava:
-            cap_path = os.path.join(batch_process_folder, os.path.splitext(image_path)[0] + ".txt")
+            cap_path = os.path.join(os.path.splitext(image_path)[0] + ".txt")
             if os.path.exists(cap_path):
                 printt(f"Loading caption from {cap_path}...")
                 with open(cap_path, 'r') as cf:
@@ -705,10 +754,6 @@ def supir_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions, 
         _faces = []
         if not dont_update_progress and progress is not None:
             progress(counter / total_images, desc=f"Upscaling Images {counter}/{total_images}")
-        video_path = None
-
-        # Only load face model if face restoration is enabled
-        bg_caption = img_prompt
         face_captions = [img_prompt]
 
         if apply_face:
@@ -729,191 +774,201 @@ def supir_process(inputs: Dict[str, List[np.ndarray[Any, np.dtype]]], captions, 
                 face_captions = [face_prompt]
             to_gpu(face_helper, SUPIR_device)
 
+        results = []
+
         for _ in range(num_images):
+            gen_params = img_params.copy()
+            gen_params['evt_id'] = event_id
+            result = None
             if random_seed or num_images > 1:
                 seed = np.random.randint(0, 2147483647)
+            gen_params['seed'] = seed
             start_time = time.time()  # Track the start time
+
+            def process_sample(model, input_data, caption, face_resolution=None, is_face=False):
+                samples = model.batchify_sample(input_data, caption, num_steps=edm_steps, restoration_scale=s_stage1,
+                                                s_churn=s_churn, s_noise=s_noise, cfg_scale=s_cfg,
+                                                control_scale=s_stage2, seed=seed,
+                                                num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
+                                                color_fix_type=color_fix_type,
+                                                use_linear_cfg=linear_cfg, use_linear_control_scale=linear_s_stage2,
+                                                cfg_scale_start=spt_linear_cfg, control_scale_start=spt_linear_s_stage2)
+
+                if is_face and face_resolution < 1024:
+                    samples = samples[:, :, 512 - face_resolution // 2:512 + face_resolution // 2,
+                              512 - face_resolution // 2:512 + face_resolution // 2]
+                return samples
 
             if apply_face:
                 faces = []
                 for face in face_helper.cropped_faces:
-                    _faces.append(face)
                     face = np.array(face) / 255 * 2 - 1
                     face = torch.tensor(face, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3,
-                           :,
-                           :]
+                           :, :]
                     faces.append(face)
-                counter = 0
-                counter_faces = 0
-                for face in faces:
-                    progress(counter_faces / len(faces), desc=f"Upscaling Face {counter_faces}/{len(faces)}")
-                    counter_faces = counter_faces + 1
-                    caption = face_captions[counter]
-                    from torch.nn.functional import interpolate
-                    face = interpolate(face, size=face_resolution, mode='bilinear', align_corners=False)
-                    if face_resolution < 1024:
-                        face = torch.nn.functional.pad(face, (512 - face_resolution // 2, 512 - face_resolution // 2,
-                                                              512 - face_resolution // 2, 512 - face_resolution // 2),
-                                                       'constant', 0)
 
-                    samples = model.batchify_sample(face, [caption], num_steps=edm_steps, restoration_scale=s_stage1,
-                                                    s_churn=s_churn,
-                                                    s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
-                                                    num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
-                                                    color_fix_type=color_fix_type,
-                                                    use_linear_cfg=linear_cfg, use_linear_control_scale=linear_s_stage2,
-                                                    cfg_scale_start=spt_linear_cfg,
-                                                    control_scale_start=spt_linear_s_stage2)
-                    if face_resolution < 1024:
-                        samples = samples[:, :, 512 - face_resolution // 2:512 + face_resolution // 2,
-                                  512 - face_resolution // 2:512 + face_resolution // 2]
-                    samples = interpolate(samples, size=face_helper.face_size, mode='bilinear', align_corners=False)
-                    x_samples = (
-                            einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
-                        0, 255).astype(np.uint8)
-
+                for index, face in enumerate(faces):
+                    progress(index / len(faces), desc=f"Upscaling Face {index}/{len(faces)}")
+                    caption = face_captions[index]
+                    samples = process_sample(model, face, [caption], face_resolution, is_face=True)
+                    samples = torch.nn.functional.interpolate(samples, size=face_helper.face_size, mode='bilinear',
+                                                              align_corners=False)
+                    x_samples = (einops.rearrange(samples,
+                                                  'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(0,
+                                                                                                                    255).astype(
+                        np.uint8)
                     face_helper.add_restored_face(x_samples[0])
-                    _faces.append(x_samples[0])
-                    # img_before_face_apply = Image.fromarray(x_samples[0])
-                    # img_before_face_apply.save("applied_face_1.png", "PNG")
+                gen_params["face_gallery"] = faces
 
-                if apply_bg:
-                    caption = [img_prompt]
-                    samples = model.batchify_sample(lq, caption, num_steps=edm_steps, restoration_scale=s_stage1,
-                                                    s_churn=s_churn,
-                                                    s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
-                                                    num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
-                                                    color_fix_type=color_fix_type,
-                                                    use_linear_cfg=linear_cfg, use_linear_control_scale=linear_s_stage2,
-                                                    cfg_scale_start=spt_linear_cfg,
-                                                    control_scale_start=spt_linear_s_stage2)
-                else:
-                    samples = lq
-                _bg = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
-                    0, 255).astype(np.uint8)
-                # img_before_face_apply = Image.fromarray(_bg[0])
-                # img_before_face_apply.save("before_face_apply.png", "PNG")
-                face_helper.get_inverse_affine(None)
-                results = [face_helper.paste_faces_to_input_image(upsample_img=_bg[0])]
-                # img_before_face_apply = Image.fromarray(results[0])
-                # img_before_face_apply.save("after_face_apply.png", "PNG")
-                # img_before_face_apply = Image.fromarray(_faces[0])
-                # img_before_face_apply.save("applied_face.png", "PNG")
-            else:
+            # Look ma, we can do either now!
+            if apply_bg:
                 caption = [img_prompt]
-                printt("Batchifying sample...")
-                samples = model.batchify_sample(lq, caption, num_steps=edm_steps, restoration_scale=s_stage1,
-                                                s_churn=s_churn,
-                                                s_noise=s_noise, cfg_scale=s_cfg, control_scale=s_stage2, seed=seed,
-                                                sampler_cls=sampler, num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
-                                                color_fix_type=color_fix_type,
-                                                use_linear_cfg=linear_cfg, use_linear_control_scale=linear_s_stage2,
-                                                cfg_scale_start=spt_linear_cfg, control_scale_start=spt_linear_s_stage2)
+                samples = process_sample(model, lq, caption)
+                _bg = (einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(0,
+                                                                                                                   255).astype(
+                    np.uint8)
+                if apply_face:
+                    face_helper.get_inverse_affine(None)
+                    result = face_helper.paste_faces_to_input_image(upsample_img=_bg[0])
+                else:
+                    result = _bg[0]
+
+            if not apply_face and not apply_bg:
+                caption = [img_prompt]
+                print("Batchifying sample...")
+                samples = process_sample(model, lq, caption)
                 x_samples = (
                         einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
                     0, 255).astype(np.uint8)
-                if save_output_immediately:
-                    printt("Saving frame")
-                    first_sample = x_samples[0]
-                    img_obj = Image.fromarray(first_sample)
-                    img_obj.save(image_path)
-                    results = [image_path]
-                else:
-                    results = [x_samples[i] for i in range(num_samples)]
+                result = x_samples[0]
 
             image_generation_time = time.time() - start_time
-            desc = f"Image {counter}/{total_images} upscale completed. Last upscale completed in {image_generation_time:.2f} seconds"
+            if result is not None:
+                results.append(result)
+                gen_params_list.append(gen_params)
+            desc = f"Image {counter}/{total_images} upscale completed in {image_generation_time:.2f} seconds"
             counter += 1
-            if not dont_update_progress and progress is not None:
-                progress(counter / total_images, desc=desc)
-            print(desc)  # Print the progress
+            progress(counter / total_images, desc=desc)
 
-            all_results.extend(results)
-            number_of_images_results.extend(results)
-        if len(inputs.keys()) == 1:
-            # Open the original image and add it for compare, not the stage1 image...
-            with open(image_path, 'rb') as f:
-                img = Image.open(f)
-                img = np.array(img)
-                all_results.insert(0, img)
-        output_data[image_path] = number_of_images_results
-        status_container.prompt = img_prompt
-        status_container.result_gallery = all_results
-        status_container.event_id = event_id
-        status_container.seed = seed
-        status_container.face_gallery = _faces
-        status_container.comparison_video = video_path
-        status_container.output_data = output_data
-        status_container.events_dict = event_data
-        output_data = {}
-        if not is_processing:  # Check if batch processing has been stopped
+        # Update outputs
+        image_data.outputs = results
+        image_data.metadata_list = gen_params_list
+        # save_image will return the image data with the outputs as paths
+        image_data = save_image(image_data, status_container.is_video)
+
+        # Append the image data to the output data after saving
+        output_data.append(image_data)
+
+        progress(counter / total_images, desc=f"Image {counter}/{total_images} processed.")
+        processed_images = counter
+        # Now break
+        if not is_processing:
             break
-
+        counter += 1
+    # Now we update the status container
+    status_container.image_data = output_data
     if not is_processing or unload:
+        progress(counter / total_images, desc="Unloading SUPIR...")
         all_to_cpu()
+        progress(counter / total_images, desc="SUPIR Unloaded.")
     main_end_time = time.time()
     global unique_counter
     unique_counter = unique_counter + 1
-    return f"Image Upscaling Completed: processed {total_images} images at in {main_end_time - main_begin_time:.2f} seconds #{unique_counter}"
+    return f"Image Upscaling Completed: processed {processed_images} images at in {main_end_time - main_begin_time:.2f} seconds #{unique_counter}"
 
 
-def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1,
-                  s_stage2, s_cfg, seed, sampler, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, linear_CFG,
-                  linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, ckpt_select, num_images,
-                  random_seed,
-                  apply_supir, face_resolution, apply_bg, apply_face, face_prompt, apply_llava,
-                  auto_deload_llava,
-                  temperature, top_p, qs, make_comparison_video, video_duration, video_fps, video_width, video_height,
-                  batch_process_folder, output_video_quality, output_video_format, progress=gr.Progress()):
+def batch_process(img_data,
+                  a_prompt, ae_dtype, apply_bg, apply_face, apply_llava, apply_supir, ckpt_select, color_fix_type,
+                  diff_dtype, edm_steps, face_prompt, face_resolution, linear_CFG, linear_s_stage2,
+                  make_comparison_video, model_select, n_prompt, num_images, num_samples, qs, random_seed,
+                  s_cfg, s_churn, s_noise, s_stage1, s_stage2, sampler, save_captions, seed, spt_linear_CFG,
+                  spt_linear_s_stage2, temperature, top_p, upscale, progress=gr.Progress()
+                  ):
     global is_processing, llava_agent, model, status_container
     ckpt_select = get_ckpt_path(ckpt_select)
     tiled = "TiledRestore" if args.use_tile_vae else "Restore"
     sampler_cls = f"sgm.modules.diffusionmodules.sampling.{tiled}{sampler}Sampler"
     if not ckpt_select:
-        return "No checkpoint selected. Please select a checkpoint to continue."
+        msg = "No checkpoint selected. Please select a checkpoint to continue."
+        return msg
     start_time = time.time()
     last_result = "Select something to do."
+    if not apply_llava and not apply_supir:
+        msg = "No processing selected. Please select LLaVA, SUPIR, or both to continue."
+        printt(msg)
+        return msg, msg
     if is_processing:
-        print("Batch processing already in progress.")
-        return "Batch processing already in progress.", "Batch processing already in progress."
+        msg = "Batch processing already in progress."
+        printt(msg)
+        return msg, msg
 
+    params = status_container.process_params
     is_processing = True
     # Get the list of image files in the folder
-    total_images = len(img_data.keys())
+    total_images = len(img_data)
 
+    # Total images, times number of images, plus 2 for load/unload
+    total_supir_steps = total_images * num_images + 2 if apply_supir else 0
+
+    # Total images, plus 2 for load/unload
+    total_llava_steps = total_images + 2 if apply_llava else 0
+
+    # Total steps, plus 1 for saving outputs
+    total_steps = total_supir_steps + total_llava_steps + 1
+    counter = 0
     # Disable llava for video...because...uh...yeah, video.
     if status_container.is_video:
         apply_llava = False
+    progress(0, desc=f"Processing {total_images} images...")
     printt(f"Processing {total_images} images...", reset=True)
     if apply_llava:
         printt('Processing LLaVA')
-        last_result = llava_process(img_data, temperature, top_p, qs, unload=True, progress=progress)
+        last_result = llava_process(img_data, temperature, top_p, qs, save_captions, progress=progress)
         printt('LLaVA processing completed')
-        captions = status_container.llava_captions
-        if auto_deload_llava:
-            print("Clearing LLaVA...")
-            clear_llava()
-    else:
-        captions = [main_prompt] * total_images
-
+        # Update the img_data from the captioner
+        img_data = status_container.image_data
     # Check for cancellation
     if not is_processing and model is not None:
-        model = model.to('cpu')
-        model.move_to('cpu')
+        progress(total_steps / total_steps, desc="Cancelling SUPIR...")
+        all_to_cpu()
         return f"Batch Processing Completed: Cancelled at {time.ctime()}.", last_result
-
+    counter += total_llava_steps
     if apply_supir:
-        print("Processing images (Stage 2)")
-        last_result = supir_process(img_data, captions, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1,
-                                    s_stage2,
-                                    s_cfg, seed, sampler_cls, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype, linear_CFG,
-                                    linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select, ckpt_select,
-                                    num_images, random_seed, apply_llava, face_resolution, apply_bg,
-                                    apply_face,
-                                    face_prompt, batch_process_folder, unload=True, progress=progress)
-    print("Processing outputs...")
-    process_outputs(outputs_folder, make_comparison_video, video_duration, video_fps, video_width, video_height,
-                    output_video_quality, output_video_format)
+        progress(counter / total_steps, desc="Processing images...")
+        printt("Processing images (Stage 2)")
+        last_result = supir_process(img_data, a_prompt, n_prompt, num_samples, upscale, edm_steps, s_stage1, s_stage2,
+                                    s_cfg, seed, sampler_cls, s_churn, s_noise, color_fix_type, diff_dtype, ae_dtype,
+                                    linear_CFG, linear_s_stage2, spt_linear_CFG, spt_linear_s_stage2, model_select,
+                                    ckpt_select,
+                                    num_images, random_seed, apply_llava, face_resolution, apply_bg, apply_face,
+                                    face_prompt, unload=True, progress=progress)
+        printt("Processing images (Stage 2) completed")
+    counter += total_supir_steps
+    progress(counter / total_steps, desc="Processing completed.")
+
+    if status_container.is_video and apply_supir:
+        printt("Processing outputs...")
+        progress(counter / total_steps, desc="Compiling video...")
+        extracted_folder = os.path.join(args.outputs_folder, "extracted_frames")
+        output_quality = params.get('output_quality', 'medium')
+        output_format = params.get('output_format', 'mp4')
+        media_output = compile_video(extracted_folder, args.outputs_folder, status_container.video_params,
+                                     output_quality,
+                                     output_format)
+        if media_output:
+            status_container.image_data = [media_output]
+            printt("Video compiled successfully.")
+        else:
+            printt("Video compilation failed.")
+    elif make_comparison_video:
+        updates = []
+        progress(counter / total_steps, desc="Creating comparison videos...")
+        for image_data in status_container.image_data:
+            output = save_compare_video(image_data, params)
+            updates.append(output)
+        status_container.image_data = updates
+    progress(1, desc="Processing Completed in " + str(time.time() - start_time) + " seconds.")
+
     is_processing = False
     end_time = time.time()
     global unique_counter
@@ -921,52 +976,48 @@ def batch_process(img_data, outputs_folder, main_prompt, a_prompt, n_prompt, num
     return f"Batch Processing Completed: processed {total_images * num_images} images at in {end_time - start_time:.2f} seconds #{unique_counter}", last_result
 
 
-def process_outputs(output_dir, make_comparison_video, video_duration, video_fps, video_width, video_height,
-                    output_quality, output_format,
-                    params: Dict[str, Any] = None):
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
+def save_image(image_data: MediaData, is_video_frame: bool):
+    global status_container
+    if len(image_data.metadata_list) >= 1:
+        params = image_data.metadata_list[0]
+    else:
+        params = status_container.process_params
+    save_caption = params.get('save_captions', False)
+    output_dir = params.get('outputs_folder', args.outputs_folder)
     metadata_dir = os.path.join(output_dir, "images_meta_data")
     if not os.path.exists(metadata_dir):
         os.makedirs(metadata_dir)
+    results = image_data.outputs
+    image_path = image_data.media_path
+    result_paths = []
+    for i, result in enumerate(results):
+        event_dict = params.copy()
 
-    compare_videos_dir = os.path.join(output_dir, "compare_videos")
-    if not os.path.exists(compare_videos_dir):
-        os.makedirs(compare_videos_dir)
+        if len(image_data.metadata_list) > i:
+            event_dict = image_data.metadata_list[i]
 
-    global status_container
-    results_dict = status_container.output_data
+        evt_id = event_dict.get('evt_id', str(time.time_ns()))
 
-    # Merge video frames back into a video
-    if status_container.is_video:
-        extracted_folder = os.path.join(args.outputs_folder, "extracted_frames")
-        if compile_video(extracted_folder, output_dir, status_container.video_params, output_quality, output_format):
-            print("Video compiled successfully.")
+        base_filename = os.path.splitext(os.path.basename(image_path))[0]
+        if len(base_filename) > 250:
+            base_filename = base_filename[:250]
+
+        img = Image.fromarray(result)
+
+        if args.log_history and not is_video_frame:
+            history_path = f'./history/{evt_id[:5]}/{evt_id[5:]}'
+            os.makedirs(history_path, exist_ok=True)
+            with open(os.path.join(history_path, 'logs.txt'), 'w') as f:
+                f.write(str(event_dict))
+            img.save(os.path.join(history_path, f'HQ_{i}.png'))
+
+        save_path = os.path.join(output_dir, f'{base_filename}.png')
+
+        # If processing video, just save the image
+        if is_video_frame:
+            save_path = image_path
+            img.save(save_path, "PNG")
         else:
-            print("Video compilation failed.")
-        return
-
-    for image_path, results in results_dict.items():
-        evt_id = str(time.time_ns())
-        event_dict = params.copy() if params is not None else {}
-        event_dict['evt_id'] = evt_id
-
-        for i, result in enumerate(results):
-            base_filename = os.path.splitext(os.path.basename(image_path))[0]
-            if len(base_filename) > 250:
-                base_filename = base_filename[:250]
-
-            img = Image.fromarray(result)
-
-            if args.log_history:
-                history_path = f'./history/{evt_id[:5]}/{evt_id[5:]}'
-                os.makedirs(history_path, exist_ok=True)
-                with open(os.path.join(history_path, 'logs.txt'), 'w') as f:
-                    f.write(str(event_dict))
-                img.save(os.path.join(history_path, f'HQ_{i}.png'))
-
-            save_path = os.path.join(output_dir, f'{base_filename}.png')
             index = 1
             while os.path.exists(save_path):
                 save_path = os.path.join(output_dir, f'{base_filename}_{str(index).zfill(4)}.png')
@@ -974,23 +1025,53 @@ def process_outputs(output_dir, make_comparison_video, video_duration, video_fps
 
             meta = PngImagePlugin.PngInfo()
             for key, value in event_dict.items():
-                meta.add_text(key, str(value))
-
+                try:
+                    meta.add_text(key, str(value))
+                except:
+                    pass
+            caption = image_data.caption.strip()
+            if caption:
+                meta.add_text('caption', caption)
+                # This will save the caption to a file with the same name as the image
+                if save_caption:
+                    caption_path = f'{os.path.splitext(save_path)[0]}.txt'
+                    with open(caption_path, 'w') as f:
+                        f.write(caption)
             img.save(save_path, "PNG", pnginfo=meta)
 
             metadata_path = os.path.join(metadata_dir, f'{os.path.splitext(os.path.basename(save_path))[0]}.txt')
             with open(metadata_path, 'w') as f:
                 for key, value in event_dict.items():
-                    f.write(f'{key}: {value}\n')
+                    try:
+                        f.write(f'{key}: {value}\n')
+                    except:
+                        pass
+        result_paths.append(save_path)
+    image_data.outputs = result_paths
+    return image_data
 
-            if make_comparison_video:
-                video_path = os.path.join(compare_videos_dir, f'{base_filename}.mp4')
-                full_save_image_path = os.path.abspath(save_path)
-                org_image_absolute_path = os.path.abspath(image_path)
-                status_container.comparison_video = video_path
-                # Assuming create_comparison_video is defined elsewhere
-                create_comparison_video(org_image_absolute_path, full_save_image_path, video_path, video_duration,
-                                        video_fps, video_width, video_height)
+
+def save_compare_video(image_data: MediaData, params):
+    image_path = image_data.media_path
+    output_dir = params.get('outputs_folder', args.outputs_folder)
+
+    compare_videos_dir = os.path.join(output_dir, "compare_videos")
+    if not os.path.exists(compare_videos_dir):
+        os.makedirs(compare_videos_dir)
+
+    base_filename = os.path.splitext(os.path.basename(image_path))[0]
+    save_path = os.path.join(output_dir, f'{base_filename}.mp4')
+    index = 1
+    while os.path.exists(save_path):
+        save_path = os.path.join(output_dir, f'{base_filename}_{str(index).zfill(4)}.mp4')
+        index += 1
+
+    video_path = os.path.join(compare_videos_dir, f'{base_filename}.mp4')
+    full_save_image_path = os.path.abspath(save_path)
+    org_image_absolute_path = os.path.abspath(image_path)
+    create_comparison_video(org_image_absolute_path, full_save_image_path, video_path, params)
+    image_data.comparison_video = video_path
+    return image_data
 
 
 def stop_batch_upscale(progress=gr.Progress()):
@@ -1141,6 +1222,7 @@ with block:
                                             elem_id="gallery1",
                                             elem_classes=["preview_box", "preview_slider", "active"],
                                             height=400, container=True)
+                result_video = gr.Video(label="Output Video", elem_classes=["preview_box"], height=400, visible=False)
                 slider_dl_button = gr.Button(value=dl_symbol, elem_classes=["slider_button"], visible=True,
                                              elem_id="download_button")
                 slider_full_button = gr.Button(value=fullscreen_symbol, elem_classes=["slider_button"], visible=True,
@@ -1205,7 +1287,7 @@ with block:
                                                     step=1.0)
                         seed_slider = gr.Slider(label="Seed", minimum=-1, maximum=2147483647, step=1, randomize=True)
                         sampler_dropdown = gr.Dropdown(label="Sampler", choices=["EDM", "DPMPP2M"],
-                                                         value="DPMPP2M")
+                                                       value="DPMPP2M")
                         s_churn_slider = gr.Slider(label="S-Churn", minimum=0, maximum=40, value=5, step=1)
                         s_noise_slider = gr.Slider(label="S-Noise", minimum=1.0, maximum=1.1, value=1.003, step=0.001)
                     prompt_styles = list_styles()
@@ -1324,59 +1406,60 @@ with block:
                                  placeholder='Please enter your feedback here.')
             submit_button = gr.Button(value="Submit Feedback")
 
+    #prompt_el, result_gallery_el, result_slider_el, result_video_el, comparison_video_el, event_id_el, seed_el, face_gallery_el
     output_elements = [
-        prompt_textbox, result_gallery, result_slider, event_id, fb_score, fb_text, seed_slider, face_gallery,
-        comparison_video
+        prompt_textbox, result_gallery, result_slider, result_video, comparison_video, event_id, seed_slider, face_gallery
     ]
 
     refresh_models_button.click(fn=refresh_models_click, outputs=[ckpt_select_dropdown])
     refresh_styles_button.click(fn=refresh_styles_click, outputs=[prompt_style_dropdown])
 
     elements_dict = {
-        "src_file": src_input_file,
-        "main_prompt": prompt_textbox,
-        "batch_process_folder": batch_process_folder_textbox,
-        "outputs_folder": outputs_folder_textbox,
         "a_prompt": a_prompt_textbox,
-        "n_prompt": n_prompt_textbox,
-        "num_samples": num_samples_slider,
-        "upscale": upscale_slider,
-        "edm_steps": edm_steps_slider,
-        "s_stage1": s_stage1_slider,
-        "s_stage2": s_stage2_slider,
-        "s_cfg": s_cfg_slider,
-        "seed": seed_slider,
-        "sampler": sampler_dropdown,
-        "s_churn": s_churn_slider,
-        "s_noise": s_noise_slider,
-        "color_fix_type": color_fix_type_radio,
-        "diff_dtype": diff_dtype_radio,
         "ae_dtype": ae_dtype_radio,
-        "linear_CFG": linear_cfg_checkbox,
-        "linear_s_stage2": linear_s_stage2_checkbox,
-        "spt_linear_CFG": spt_linear_cfg_slider,
-        "spt_linear_s_stage2": spt_linear_s_stage2_slider,
-        "model_select": model_select_radio,
-        "ckpt_select": ckpt_select_dropdown,
-        "num_images": num_images_slider,
-        "random_seed": random_seed_checkbox,
-        "apply_supir": apply_supir_checkbox,
-        "face_resolution": face_resolution_slider,
         "apply_bg": apply_bg_checkbox,
         "apply_face": apply_face_checkbox,
-        "face_prompt": face_prompt_textbox,
         "apply_llava": apply_llava_checkbox,
+        "apply_supir": apply_supir_checkbox,
         "auto_deload_llava": auto_unload_llava,
+        "batch_process_folder": batch_process_folder_textbox,
+        "ckpt_select": ckpt_select_dropdown,
+        "color_fix_type": color_fix_type_radio,
+        "diff_dtype": diff_dtype_radio,
+        "edm_steps": edm_steps_slider,
+        "face_prompt": face_prompt_textbox,
+        "face_resolution": face_resolution_slider,
+        "linear_CFG": linear_cfg_checkbox,
+        "linear_s_stage2": linear_s_stage2_checkbox,
+        "main_prompt": prompt_textbox,
+        "make_comparison_video": make_comparison_video_checkbox,
+        "model_select": model_select_radio,
+        "n_prompt": n_prompt_textbox,
+        "num_images": num_images_slider,
+        "num_samples": num_samples_slider,
+        "output_video_format": output_vf_dropdown,
+        "output_video_quality": output_vq_dropdown,
+        "outputs_folder": outputs_folder_textbox,
+        "qs": qs_textbox,
+        "random_seed": random_seed_checkbox,
+        "s_cfg": s_cfg_slider,
+        "s_churn": s_churn_slider,
+        "s_noise": s_noise_slider,
+        "s_stage1": s_stage1_slider,
+        "s_stage2": s_stage2_slider,
+        "sampler": sampler_dropdown,
+        "save_captions": save_captions_checkbox,
+        "seed": seed_slider,
+        "spt_linear_CFG": spt_linear_cfg_slider,
+        "spt_linear_s_stage2": spt_linear_s_stage2_slider,
+        "src_file": src_input_file,
         "temperature": temperature_slider,
         "top_p": top_p_slider,
-        "qs": qs_textbox,
-        "make_comparison_video": make_comparison_video_checkbox,
+        "upscale": upscale_slider,
         "video_duration": video_duration_textbox,
         "video_fps": video_fps_textbox,
-        "video_width": video_width_textbox,
         "video_height": video_height_textbox,
-        "output_video_quality": output_vq_dropdown,
-        "output_video_format": output_vf_dropdown
+        "video_width": video_width_textbox,
     }
 
     elements = list(elements_dict.values())
@@ -1420,7 +1503,8 @@ with block:
     # s_cfg_Quality, spt_linear_CFG_Quality, s_cfg_Fidelity, spt_linear_CFG_Fidelity, edm_steps
     model_settings_elements = [s_cfg_slider, spt_linear_cfg_slider, edm_steps_slider]
 
-    ckpt_type.change(fn=update_model_settings, inputs=[ckpt_type, param_setting_select ], outputs=model_settings_elements)
+    ckpt_type.change(fn=update_model_settings, inputs=[ckpt_type, param_setting_select],
+                     outputs=model_settings_elements)
 
 
     def do_nothing():
