@@ -906,6 +906,10 @@ def batch_process(img_data,
         msg = "Batch processing already in progress."
         printt(msg)
         return msg, msg
+    if len(img_data) == 0:
+        msg = "No images to process."
+        printt(msg)
+        return msg, msg
 
     params = status_container.process_params
     is_processing = True

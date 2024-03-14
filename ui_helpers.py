@@ -68,7 +68,7 @@ def extract_video(video_path: str, output_path: str, quality: int = 100, format:
 
     # If framerate information is available, use it in the command
     if 'framerate' in video_params:
-        commands.insert(-2, f"fps=fps={video_params['framerate']}")  # Insert before '-c:v' argument
+        commands.insert(-2, f"fps={video_params['framerate']}")  # Insert before '-c:v' argument
 
     # Ensure the pixel format is appropriate for the output format
     if format.lower() == 'png':
