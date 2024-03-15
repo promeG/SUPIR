@@ -54,6 +54,7 @@ def extract_video(video_path: str, output_path: str, quality: int = 100, format:
     trim_frame_start = video_start
     trim_frame_end = video_end
     target_path = output_path
+    printt(f"Extracting frames to: {target_path}, {format}")
     temp_frames_pattern = os.path.join(target_path, '%04d.' + format)
     commands = ['-hwaccel', 'auto', '-i', video_path, '-q:v', str(temp_frame_compression), '-pix_fmt', 'rgb24']
     resolution = f"{video_params['width']}x{video_params['height']}"

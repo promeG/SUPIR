@@ -656,9 +656,9 @@ def start_single_process(*element_values):
         if os.path.exists(extracted_folder):
             shutil.rmtree(extracted_folder)
         os.makedirs(extracted_folder, exist_ok=True)
-        video_start = values_dict.get('video_start', 0)
-        video_end = values_dict.get('video_end', 0)
-        extract_success, video_params = extract_video(input_image, extracted_folder, video_start, video_end)
+        start = values_dict.get('video_start', None)
+        end = values_dict.get('video_end', None)
+        extract_success, video_params = extract_video(input_image, extracted_folder, video_start=start, video_end=end)
         if extract_success:
             status_container.video_params = video_params
         for file in os.listdir(extracted_folder):
