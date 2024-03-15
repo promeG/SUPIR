@@ -1,6 +1,9 @@
 let isActive = false;
 let openLabels = [];
 let fullscreenButton;
+let sliderLoaded = false;
+let vidLength = 0;
+let vidFps = 0;
 
 
 function gradioApp() {
@@ -15,17 +18,19 @@ function gradioApp() {
     return elem.shadowRoot ? elem.shadowRoot : elem;
 }
 
-function getRealElement(selector) {
+function getRealElement(selector, get_input = false) {
     let elem = gradioApp().getElementById(selector);
+    let output = elem;
     if (elem) {
         let child = elem.querySelector('#' + selector);
         if (child) {
-            return child;
-        } else {
-            return elem;
+            output = child;
         }
     }
-    return elem;
+    if (get_input) {
+        return output.querySelector('input');
+    }
+    return output;
 }
 
 function filterArgs(argsCount, arguments) {
@@ -37,6 +42,128 @@ function filterArgs(argsCount, arguments) {
     }
     return args_out;
 }
+
+function update_slider() {
+    console.log("Input args: ", arguments);
+    configureSlider(arguments[4], arguments[3]);
+    return filterArgs(6, arguments);
+}
+
+function configureSlider(videoLength, fps) {
+    if (vidFps === fps && vidLength === videoLength) {
+        console.log('configureSlider', 'videoLength and fps are the same');
+        return;
+    }
+    if (videoLength === 0) {
+        console.log('configureSlider', 'videoLength is 0');
+        return;
+    }
+    console.log('configureSlider, re-creating slider.', 'videoLength', videoLength, 'fps', fps);
+    vidFps = fps;
+    vidLength = videoLength;
+    let connectSlider2 = document.getElementById('frameSlider');
+    let endTimeLabel = document.getElementById('endTimeLabel');
+    let nowTimeLabel = document.getElementById('nowTimeLabel');
+    if (sliderLoaded) {
+        try {
+            connectSlider2.noUiSlider.destroy();
+        } catch (e) {
+            console.log('configureSlider', 'noUiSlider.destroy failed', e);
+        }
+    }
+
+
+    let midPoint = Math.floor(videoLength / 2);
+
+    noUiSlider.create(connectSlider2, {
+        start: [0, midPoint, videoLength],
+        connect: [false, true, true, false],
+        range: {
+            'min': 0,
+            'max': videoLength
+        }
+    });
+    videoLength = Math.floor(videoLength / fps);
+    midPoint = Math.floor(midPoint / fps);
+
+    endTimeLabel.innerHTML = formatSeconds(videoLength);
+    nowTimeLabel.innerHTML = formatSeconds(midPoint);
+    connectSlider2.noUiSlider.on('set', updateSliderElements);
+    connectSlider2.noUiSlider.on('slide', updateSliderTimes);
+    sliderLoaded = true;
+}
+
+function formatSeconds(seconds) {
+    let minutes = Math.floor(seconds / 60);
+    let remainingSeconds = seconds % 60;
+    (remainingSeconds < 10) ? remainingSeconds = '0' + remainingSeconds: remainingSeconds = remainingSeconds.toString();
+    if (minutes < 60) {
+        let hours = Math.floor(minutes / 60);
+        let remainingMinutes = minutes % 60;
+        (remainingMinutes < 10) ? remainingMinutes = '0' + remainingMinutes: remainingMinutes = remainingMinutes.toString();
+        return hours + ':' + remainingMinutes + ':' + remainingSeconds;
+    }
+    return minutes + ':' + remainingSeconds;
+}
+
+function updateSliderElements(values, handle, unencoded, tap, positions, noUiSlider) {
+    console.log('updateSliderElements', values, handle);
+    // Convert strings from values to floats
+    let startTime = Math.floor(values[0]);
+    let nowTime = Math.floor(values[1]);
+    let endTime = Math.floor(values[2]);
+    let start = document.getElementById('startTimeLabel');
+    let end = document.getElementById('endTimeLabel');
+    let now = document.getElementById('nowTimeLabel');
+
+    let startNumber = getRealElement('start_time', true);
+    let endNumber = getRealElement('end_time', true);
+    let nowNumber = getRealElement('current_time', true);
+    let fpsNumber = getRealElement('video_fps', true);
+    let lastStartTime = startNumber.value;
+    let lastNowTime = nowNumber.value;
+    let lastEndTime = endNumber.value;
+    startNumber.value = startTime;
+    nowNumber.value = nowTime;
+    endNumber.value = endTime;
+    let times = [lastStartTime, lastNowTime, lastEndTime];
+    let idx = 0;
+    [startNumber, nowNumber, endNumber].forEach(el => {
+        if (el.value !== times[idx]) {
+            el.dispatchEvent(new Event('input', { 'bubbles': true }));
+        }
+        idx++;
+    });
+
+    let fps = fpsNumber.value;
+    startTime = Math.floor(startTime / fps);
+    endTime = Math.floor(endTime / fps);
+    nowTime = Math.floor(nowTime / fps);
+    start.innerHTML = formatSeconds(startTime);
+    end.innerHTML = formatSeconds(endTime);
+    now.innerHTML = formatSeconds(nowTime);
+}
+
+function updateSliderTimes(values, handle, unencoded, tap, positions, noUiSlider) {
+    console.log('updateSliderTimes', values, handle);
+    // Convert strings from values to floats
+    let startTime = Math.floor(values[0]);
+    let nowTime = Math.floor(values[1]);
+    let endTime = Math.floor(values[2]);
+    let start = document.getElementById('startTimeLabel');
+    let end = document.getElementById('endTimeLabel');
+    let now = document.getElementById('nowTimeLabel');
+
+    let fpsNumber = getRealElement('video_fps', true);
+    let fps = fpsNumber.value;
+    startTime = Math.floor(startTime / fps);
+    endTime = Math.floor(endTime / fps);
+    nowTime = Math.floor(nowTime / fps);
+    start.innerHTML = formatSeconds(startTime);
+    end.innerHTML = formatSeconds(endTime);
+    now.innerHTML = formatSeconds(nowTime);
+}
+
 function toggleFullscreen() {
     console.log('toggleFullscreen', isActive);
     if (isActive) {

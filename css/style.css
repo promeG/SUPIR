@@ -11,7 +11,8 @@
 }
 
 #output_metadata {
-    height: 42.5vh;
+    height: 41.5vh;
+    overflow-y: scroll !important;
 }
 
 .output_view_col {
@@ -70,7 +71,7 @@
     max-height: 100%;
     justify-content: center;
     align-items: center;
-    display:flex;
+    display: flex;
 }
 
 .preview_slider img {
@@ -174,4 +175,50 @@
     left: 10px;
     top: 10px;
 }
+
+.keyframe-slider {
+    position: absolute;
+    width: 100%;
+    margin: auto;
+    padding: 20px 40px;
+    top: -80px;
+    left: 0;
+}
+
+.noUi-connect {
+    background-image: initial;
+    background-color: var(--border-color-primary);
+    background: var(--border-color-primary);
+}
+
+
+.labels {
+    display: flex;
+    justify-content: space-between;
+    padding-top: 10px;
+}
+
+.labels span {
+    color: rgb(168, 160, 149);
+    background: #000000;
+    padding: 1px;
+    border-radius: 10px;
+    min-width: 70px;
+    text-align: center;
+}
+
+.noUi-handle {
+    width: 15px;
+    right: 0 !important;
+}
+
+.noUi-handle:after {
+    left: 6px !important;
+}
+
+
+.noUi-base .noUi-origin:first-child .noUi-handle, .noUi-connects .noUi-origin:last-child .noUi-handle {
+    background: var(--button-secondary-background);
+}
+
 
