@@ -120,9 +120,9 @@ slider_html = """
 
   <!-- Labels for start and end times -->
   <div class="labels">
-    <span id="startTimeLabel">Start: 0:00</span>
+    <span id="startTimeLabel">0:00</span>
     <span id="nowTimeLabel">0:30</span>
-    <span id="endTimeLabel">End: 1:00</span>
+    <span id="endTimeLabel">1:00</span>
   </div>
 </div>
 """
@@ -398,7 +398,7 @@ def update_inputs(input_file, upscale_amount):
     current_video_fps = 0
     res_output = gr.update(value="")
     if is_image(input_file):
-        image_input = gr.update(visible=True, value=input_file, sources=[])
+        image_input = gr.update(visible=True, value=input_file, sources=[], label="Input Image")
         file_input = gr.update(visible=False)
         res_output = gr.update(value=update_target_resolution(input_file, upscale_amount))
     elif is_video(input_file):
@@ -411,7 +411,7 @@ def update_inputs(input_file, upscale_amount):
         video_current_time = gr.update(value=mid_time)
         video_frame = ui_helpers.get_video_frame(input_file, mid_time)
         video_slider = gr.update(visible=True)
-        image_input = gr.update(visible=True, value=video_frame, sources=[])
+        image_input = gr.update(visible=True, value=video_frame, sources=[], label="Input Video")
         file_input = gr.update(visible=False)
         video_fps = gr.update(value=current_video_fps)
         res_output = gr.update(value=update_target_resolution(input_file, upscale_amount))
@@ -999,6 +999,8 @@ def batch_process(img_data,
     progress(counter / total_steps, desc="Processing completed.")
 
     if status_container.is_video and apply_supir:
+        if not is_processing:
+            printt("Processing cancelled, skipping video compilation.")
         printt("Processing outputs...")
         progress(counter / total_steps, desc="Compiling video...")
         extracted_folder = os.path.join(args.outputs_folder, "extracted_frames")
@@ -1286,11 +1288,11 @@ with (block):
                                              elem_classes=["preview_box"], height=400, sources=[],
                                              visible=False)
                 video_slider_display = gr.HTML(elem_id="video_slider_display", visible=False, value=slider_html)
-                video_start_time_number = gr.Number(label="Start Time", value=0, visible=args.debug, elem_id="start_time")
-                video_end_time_number = gr.Number(label="End Time", value=0, visible=args.debug, elem_id="end_time")
-                video_current_time_number = gr.Number(label="Current Time", value=0, visible=args.debug, elem_id="current_time")
-                video_fps_number = gr.Number(label="FPS", value=0, visible=args.debug, elem_id="video_fps")
-                video_total_frames_number = gr.Number(label="Total Frames", value=0, visible=args.debug, elem_id="total_frames")
+                video_start_time_number = gr.Number(label="Start Time", value=0, visible=False, elem_id="start_time")
+                video_end_time_number = gr.Number(label="End Time", value=0, visible=False, elem_id="end_time")
+                video_current_time_number = gr.Number(label="Current Time", value=0, visible=False, elem_id="current_time")
+                video_fps_number = gr.Number(label="FPS", value=0, visible=False, elem_id="video_fps")
+                video_total_frames_number = gr.Number(label="Total Frames", value=0, visible=False, elem_id="total_frames")
 
             with gr.Column(visible=False, elem_classes=['preview_col']) as comparison_video_col:
                 comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"], height=400,
