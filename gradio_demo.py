@@ -66,6 +66,11 @@ parser.add_argument("--debug", action='store_true', default=False,
 args = parser.parse_args()
 ui_helpers.ui_args = args
 current_video_fps = 0
+total_video_frames = 0
+video_start = 0
+video_end = 0
+last_input_path = None
+last_video_params = None
 
 total_vram = 100000
 auto_unload = False
@@ -120,9 +125,9 @@ slider_html = """
 
   <!-- Labels for start and end times -->
   <div class="labels">
-    <span id="startTimeLabel">0:00</span>
-    <span id="nowTimeLabel">0:30</span>
-    <span id="endTimeLabel">1:00</span>
+    <span id="startTimeLabel">0:00:00</span>
+    <span id="nowTimeLabel">0:00:30</span>
+    <span id="endTimeLabel">0:01:00</span>
   </div>
 </div>
 """
@@ -137,6 +142,20 @@ def refresh_styles_click():
     new_style_list = list_styles()
     style_list = list(new_style_list.keys())
     return gr.update(choices=style_list)
+
+
+def update_start_time(src_file, upscale_size, start_time):
+    global video_start
+    video_start = start_time
+    target_res_text = update_target_resolution(src_file, upscale_size)
+    return gr.update(value=target_res_text)
+
+
+def update_end_time(src_file, upscale_size, end_time):
+    global video_end
+    video_end = end_time
+    target_res_text = update_target_resolution(src_file, upscale_size)
+    return gr.update(value=target_res_text)
 
 
 def select_style(style_name, current_prompt=None, values=False):
@@ -386,7 +405,7 @@ def update_model_settings(model_type, param_setting):
 
 
 def update_inputs(input_file, upscale_amount):
-    global current_video_fps
+    global current_video_fps, total_video_frames, video_start, video_end
     file_input = gr.update(visible=True)
     image_input = gr.update(visible=False, sources=[])
     video_slider = gr.update(visible=False)
@@ -396,6 +415,9 @@ def update_inputs(input_file, upscale_amount):
     video_fps = gr.update(value=0)
     video_total_frames = gr.update(value=0)
     current_video_fps = 0
+    total_video_frames = 0
+    video_start = 0
+    video_end = 0
     res_output = gr.update(value="")
     if is_image(input_file):
         image_input = gr.update(visible=True, value=input_file, sources=[], label="Input Image")
@@ -403,9 +425,12 @@ def update_inputs(input_file, upscale_amount):
         res_output = gr.update(value=update_target_resolution(input_file, upscale_amount))
     elif is_video(input_file):
         video_attributes = ui_helpers.get_video_params(input_file)
+        video_start = 0
         end_time = video_attributes['frames']
+        video_end = end_time
         mid_time = int(end_time / 2)
         current_video_fps = video_attributes['framerate']
+        total_video_frames = end_time
         video_end_time = gr.update(value=end_time)
         video_total_frames = gr.update(value=end_time)
         video_current_time = gr.update(value=mid_time)
@@ -422,17 +447,29 @@ def update_inputs(input_file, upscale_amount):
 
 def update_target_resolution(img, do_upscale):
     # Read the input image dimensions
+    global last_input_path, last_video_params
     if img is None:
+        last_video_params = None
+        last_input_path = None
         return ""
     if is_image(img):
+        last_input_path = img
+        last_video_params = None
         with Image.open(img) as img:
             width, height = img.size
             width_org, height_org = img.size
     elif is_video(img):
-        params = get_video_params(img)
+        if img == last_input_path:
+            params = last_video_params
+        else:
+            last_input_path = img
+            params = get_video_params(img)
+            last_video_params = params
         width, height = params['width'], params['height']
         width_org, height_org = params['width'], params['height']
     else:
+        last_input_path = None
+        last_video_params = None
         return ""
 
     # Apply the do_upscale ratio
@@ -445,8 +482,18 @@ def update_target_resolution(img, do_upscale):
         width *= do_upscale_factor
         height *= do_upscale_factor
 
-    # Update the target resolution label
-    return f"Input: {int(width_org)}x{int(height_org)} px, {width_org * height_org / 1e6:.2f} Megapixels / Estimated Output Resolution: {int(width)}x{int(height)} px, {width * height / 1e6:.2f} Megapixels"
+    output = f"""
+Input: {int(width_org)}x{int(height_org)} px, {width_org * height_org / 1e6:.2f} Megapixels 
+Estimated Output Resolution: {int(width)}x{int(height)} px, {width * height / 1e6:.2f} Megapixels
+"""
+    if total_video_frames > 0 and is_video(img):
+        selected_video_frames = video_end - video_start
+        total_video_time = int(selected_video_frames / current_video_fps)
+        output += f"""
+Selected video frames: {selected_video_frames}
+Total video time: {total_video_time} seconds
+"""
+    return output
 
 
 def read_image_metadata(image_path):
@@ -681,7 +728,7 @@ def start_batch_process(element_values: List[Any]):
     try:
         keys_to_pop = ['auto_deload_llava', 'batch_process_folder', 'main_prompt', 'output_video_format',
                        'output_video_quality', 'outputs_folder', 'video_duration', 'video_end', 'video_fps',
-                       'video_height', 'video_start','video_width', 'src_file']
+                       'video_height', 'video_start', 'video_width', 'src_file']
 
         status_container.outputs_folder = outputs_folder
         status_container.process_params = values_dict
@@ -729,10 +776,16 @@ def llava_process(inputs: List[MediaData], temp, p, question=None, save_captions
     return f"LLaVA Processing Completed: {len(inputs)} images processed at {time.ctime()}."
 
 
-def update_video_slider(start_time, current_time, end_time, fps, total_frames, src_file):
+# video_start_time_number, video_current_time_number, video_end_time_number,
+#                      video_fps_number, video_total_frames_number, src_input_file, upscale_slider
+def update_video_slider(start_time, current_time, end_time, fps, total_frames, src_file, upscale_size):
     print(f"Updating video slider: {start_time}, {current_time}, {end_time}, {fps}, {src_file}")
+    global video_start, video_end
+    video_start = start_time
+    video_end = end_time
     video_frame = ui_helpers.get_video_frame(src_file, current_time)
-    return gr.update(value=video_frame)
+    target_res_text = update_target_resolution(src_file, upscale_size)
+    return gr.update(value=video_frame), gr.update(value=target_res_text)
 
 
 def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
@@ -1290,9 +1343,11 @@ with (block):
                 video_slider_display = gr.HTML(elem_id="video_slider_display", visible=False, value=slider_html)
                 video_start_time_number = gr.Number(label="Start Time", value=0, visible=False, elem_id="start_time")
                 video_end_time_number = gr.Number(label="End Time", value=0, visible=False, elem_id="end_time")
-                video_current_time_number = gr.Number(label="Current Time", value=0, visible=False, elem_id="current_time")
+                video_current_time_number = gr.Number(label="Current Time", value=0, visible=False,
+                                                      elem_id="current_time")
                 video_fps_number = gr.Number(label="FPS", value=0, visible=False, elem_id="video_fps")
-                video_total_frames_number = gr.Number(label="Total Frames", value=0, visible=False, elem_id="total_frames")
+                video_total_frames_number = gr.Number(label="Total Frames", value=0, visible=False,
+                                                      elem_id="total_frames")
 
             with gr.Column(visible=False, elem_classes=['preview_col']) as comparison_video_col:
                 comparison_video = gr.Video(label="Comparison Video", elem_classes=["preview_box"], height=400,
@@ -1313,7 +1368,7 @@ with (block):
         with gr.Row():
             with gr.Column():
                 with gr.Accordion("General options", open=True):
-                    target_res_textbox = gr.Textbox(label="Input / Output Resolution", value="", interactive=False)
+                    target_res_textbox = gr.Textbox(label="Input/Output Data", value="", interactive=False)
                     if args.debug:
                         populate_slider_button = gr.Button(value="Populate Slider")
                         populate_gallery_button = gr.Button(value="Populate Gallery")
@@ -1587,7 +1642,8 @@ with (block):
                              show_progress=False, queue=True, js="toggleFullscreen")
 
     input_elements = [src_input_file, src_image_display, video_slider_display, target_res_textbox,
-                      video_start_time_number, video_end_time_number, video_current_time_number, video_fps_number, video_total_frames_number]
+                      video_start_time_number, video_end_time_number, video_current_time_number, video_fps_number,
+                      video_total_frames_number]
     src_input_file.change(fn=update_inputs, inputs=[src_input_file, upscale_slider],
                           outputs=input_elements)
     src_image_display.clear(fn=update_inputs, inputs=[src_image_display, upscale_slider],
@@ -1598,8 +1654,12 @@ with (block):
     ckpt_type.change(fn=update_model_settings, inputs=[ckpt_type, param_setting_select],
                      outputs=model_settings_elements)
 
-    video_sliders = [video_start_time_number, video_current_time_number, video_end_time_number, video_fps_number, video_total_frames_number, src_input_file]
-    video_current_time_number.change(fn=update_video_slider, inputs=video_sliders, outputs=src_image_display, js="update_slider")
+    video_sliders = [video_start_time_number, video_current_time_number, video_end_time_number,
+                     video_fps_number, video_total_frames_number, src_input_file, upscale_slider]
+    video_current_time_number.change(fn=update_video_slider, inputs=video_sliders,
+                                     outputs=[src_image_display, target_res_textbox], js="update_slider")
+    video_start_time_number.change(fn=update_start_time, inputs=[src_input_file, upscale_slider, video_start_time_number], outputs=target_res_textbox)
+    video_end_time_number.change(fn=update_end_time, inputs=[src_input_file, upscale_slider, video_end_time_number], outputs=target_res_textbox)
 
 
     def do_nothing():

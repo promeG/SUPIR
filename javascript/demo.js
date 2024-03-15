@@ -46,7 +46,7 @@ function filterArgs(argsCount, arguments) {
 function update_slider() {
     console.log("Input args: ", arguments);
     configureSlider(arguments[4], arguments[3]);
-    return filterArgs(6, arguments);
+    return filterArgs(7, arguments);
 }
 
 function configureSlider(videoLength, fps) {
