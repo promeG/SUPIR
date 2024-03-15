@@ -36,9 +36,9 @@ parser.add_argument("--ip", type=str, default='127.0.0.1', help="IP address for 
 parser.add_argument("--share", type=str, default=False, help="Set to True to share the app publicly.")
 parser.add_argument("--port", type=int, help="Port number for the server to listen on.")
 parser.add_argument("--log_history", action='store_true', default=False, help="Enable logging of request history.")
-parser.add_argument("--loading_half_params", action='store_true', default=False,
+parser.add_argument("--loading_half_params", action='store_true', default=True,
                     help="Enable loading model parameters in half precision to reduce memory usage.")
-parser.add_argument("--use_tile_vae", action='store_true', default=False,
+parser.add_argument("--use_tile_vae", action='store_true', default=True,
                     help="Enable tiling for the VAE to handle larger images with limited memory.")
 parser.add_argument("--use_fast_tile", action='store_true', default=False,
                     help="Use a faster tile encoding/decoding, may impact quality.")
@@ -91,7 +91,7 @@ if args.ckpt_dir == "models/checkpoints":
 
 if torch.cuda.device_count() >= 2:
     SUPIR_device = 'cuda:0'
-    LLaVA_device = 'cuda:1'
+    LLaVA_device = 'cuda:0'
 elif torch.cuda.device_count() == 1:
     SUPIR_device = 'cuda:0'
     LLaVA_device = 'cuda:0'
@@ -305,6 +305,7 @@ def clear_llava():
 
 
 def all_to_cpu_background():
+    return
     global face_helper, model, llava_agent
     printt("Moving all to CPU")
     if face_helper is not None:
@@ -320,6 +321,7 @@ def all_to_cpu_background():
 
 
 def all_to_cpu():
+    return
     cpu_thread = threading.Thread(target=all_to_cpu_background)
     cpu_thread.start()
 
@@ -934,6 +936,8 @@ def batch_process(img_data,
         printt('Processing LLaVA')
         last_result = llava_process(img_data, temperature, top_p, qs, save_captions, progress=progress)
         printt('LLaVA processing completed')
+        #if auto_unload_llava:
+        #    unload_llava()
         # Update the img_data from the captioner
         img_data = status_container.image_data
     # Check for cancellation
