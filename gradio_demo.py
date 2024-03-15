@@ -496,7 +496,8 @@ def update_elements(status_label):
         elif len(output_data) > 1:
             first_output_data = output_data[0]
             if len(first_output_data.outputs):
-                first_params = first_output_data.metadata_list[0] if first_output_data.metadata_list else status_container.process_params
+                first_params = first_output_data.metadata_list[
+                    0] if first_output_data.metadata_list else status_container.process_params
                 seed = first_params.get('seed', "")
                 face_gallery_items = first_params.get('face_gallery', [])
                 evt_id = first_params.get('event_id', "")
@@ -1196,13 +1197,14 @@ def show_output(selected_file):
     else:
         return gr.update(visible=False), gr.update(visible=False)
 
+
 default_llava_prompt = "Describe this image and its style in a very detailed manner. The image is a realistic photography, not an art painting."
 prompt_styles = list_styles()
 # Make a list of prompt_styles keys
 prompt_styles_keys = list(prompt_styles.keys())
 
 selected_pos, selected_neg, llava_style_prompt = select_style(
-                            prompt_styles_keys[0] if len(prompt_styles_keys) > 0 else "", default_llava_prompt,True)
+    prompt_styles_keys[0] if len(prompt_styles_keys) > 0 else "", default_llava_prompt, True)
 
 block = gr.Blocks(title='SUPIR', theme=args.theme, css=css_file, head=head).queue()
 
@@ -1268,7 +1270,7 @@ with block:
                         ckpt_type = gr.Dropdown(label="Checkpoint Type", choices=["Standard SDXL", "SDXL Lightning"],
                                                 value="Standard SDXL")
                     with gr.Row(elem_id="style_select_row"):
-                        prompt_style_dropdown = gr.Dropdown(label="Default Prompt Style",
+                        prompt_style_dropdown = gr.Dropdown(label="Prompt Style",
                                                             choices=prompt_styles_keys,
                                                             value=prompt_styles_keys[0] if len(
                                                                 prompt_styles_keys) > 0 else "")
@@ -1320,8 +1322,8 @@ with block:
                                                       value=selected_neg)
                 with gr.Accordion("Video options", open=False):
                     with gr.Column():
-                        output_vq_dropdown = gr.Dropdown(label="Video Quality", choices=["Low", "Medium", "High"],
-                                                         value="High")
+                        output_vq_slider = gr.Slider(label="Output Video Quality", minimum=0.1, maximum=1.0, value=0.6,
+                                                     step=0.1)
                         output_vf_dropdown = gr.Dropdown(label="Video Format", choices=["mp4", "mkv"], value="mp4")
 
             with gr.Column():
@@ -1386,22 +1388,28 @@ with block:
                         video_fps_textbox = gr.Textbox(label="FPS", value="30")
                         video_width_textbox = gr.Textbox(label="Width", value="1920")
                         video_height_textbox = gr.Textbox(label="Height", value="1080")
-    with gr.Tab("Image Metadata"):
-        with gr.Row():
-            metadata_image_input = gr.Image(type="filepath", label="Upload Image")
-            metadata_output = gr.Textbox(label="Image Metadata", lines=25, max_lines=50)
-        metadata_image_input.change(fn=read_image_metadata, inputs=[metadata_image_input], outputs=[metadata_output])
+
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
+
     with gr.Tab("Outputs", elem_id="output_tab"):
-        with gr.Row():
-            with gr.Column():
-                output_files = gr.FileExplorer(label="Output Folder", file_count="single", elem_id="output_folder",
-                                               root_dir=args.outputs_folder)
-            with gr.Column():
-                output_image = gr.Image(type="filepath", label="Output Image", elem_id="output_image", visible=False)
-                output_video = gr.Video(label="Output Video", elem_id="output_video", visible=False)
+        with gr.Row(elem_id="output_view_row"):
+            with gr.Column(elem_classes=["output_view_col"]):
+                with gr.Row():
+                    output_files = gr.FileExplorer(label="Output Folder", file_count="single", elem_id="output_folder",
+                                                   root_dir=args.outputs_folder, height="85vh")
+                    output_files_refresh_btn = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"], size="sm")
+                    def refresh_output_files():
+                        return gr.update(value=args.outputs_folder)
+                    output_files_refresh_btn.click(fn=refresh_output_files, outputs=[output_files],
+                                                   show_progress=True, queue=True)
+            with gr.Column(elem_classes=["output_view_col"]):
+                output_image = gr.Image(type="filepath", label="Output Image", elem_id="output_image", visible=False, height="42.5vh")
+                output_video = gr.Video(label="Output Video", elem_id="output_video", visible=False, height="42.5vh")
+                metadata_output = gr.Textbox(label="Image Metadata", lines=25, max_lines=50, elem_id="output_metadata")
+                output_image.change(fn=read_image_metadata, inputs=[output_image],
+                                    outputs=[metadata_output])
 
     with gr.Tab("About"):
         gr.HTML(f"<H2>About {SUPIR_REVISION}</H2>")
@@ -1416,9 +1424,10 @@ with block:
                                  placeholder='Please enter your feedback here.')
             submit_button = gr.Button(value="Submit Feedback")
 
-    #prompt_el, result_gallery_el, result_slider_el, result_video_el, comparison_video_el, event_id_el, seed_el, face_gallery_el
+    # prompt_el, result_gallery_el, result_slider_el, result_video_el, comparison_video_el, event_id_el, seed_el, face_gallery_el
     output_elements = [
-        prompt_textbox, result_gallery, result_slider, result_video, comparison_video, event_id, seed_slider, face_gallery
+        prompt_textbox, result_gallery, result_slider, result_video, comparison_video, event_id, seed_slider,
+        face_gallery
     ]
 
     refresh_models_button.click(fn=refresh_models_click, outputs=[ckpt_select_dropdown])
@@ -1448,7 +1457,7 @@ with block:
         "num_images": num_images_slider,
         "num_samples": num_samples_slider,
         "output_video_format": output_vf_dropdown,
-        "output_video_quality": output_vq_dropdown,
+        "output_video_quality": output_vq_slider,
         "outputs_folder": outputs_folder_textbox,
         "qs": qs_textbox,
         "random_seed": random_seed_checkbox,

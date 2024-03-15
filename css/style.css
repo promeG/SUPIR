@@ -3,6 +3,24 @@
     height: 400px;
 }
 
+#output_view_row {
+    height: 100%;
+    max-height: 100%;
+    min-height: 100%;
+    overflow: hidden;
+}
+
+#output_metadata {
+    height: 42.5vh;
+}
+
+.output_view_col {
+    height: 100%;
+    max-height: 100%;
+    min-height: 100%;
+    overflow: hidden;
+}
+
 .progress_label {
     max-height: 50px;
     min-height: 50px;

@@ -98,6 +98,9 @@ def get_video_params(video_path: str) -> Dict[str, str]:
 
 def compile_video(src_path: str, output_path: str, video_params: Dict[str, str], quality: int = 1,
                 file_type: str = 'mp4') -> bool:
+    # if quality is a string, just make it 1
+    if isinstance(quality, str):
+        quality = 1.0
     output_path_with_type = f"{output_path}.{file_type}"
     temp_frames_pattern = os.path.join(src_path, '%04d.png')
     video_fps = video_params['framerate']
