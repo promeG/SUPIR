@@ -962,7 +962,6 @@ def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
         # Now break
         if not is_processing:
             break
-        counter += 1
     # Now we update the status container
     status_container.image_data = output_data
     if not is_processing or unload:
