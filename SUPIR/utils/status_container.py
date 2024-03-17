@@ -14,6 +14,7 @@ class StatusContainer:
         self.is_video: bool = False
         self.video_params: Dict[str, Any] = {}
         self.process_params: Dict[str, Any] = {}
+        self.source_video_path = None
 
 
 class MediaData:

@@ -7,7 +7,7 @@ import threading
 import time
 import traceback
 from datetime import datetime
-from typing import Tuple, List, Any
+from typing import Tuple, List, Any, Dict
 import gc
 import einops
 import gradio as gr
@@ -30,7 +30,7 @@ from SUPIR.utils.status_container import StatusContainer, MediaData
 from llava.llava_agent import LLavaAgent
 from ui_helpers import is_video, extract_video, compile_video, is_image, get_video_params, printt
 
-SUPIR_REVISION = "v41"
+SUPIR_REVISION = "v42"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1', help="IP address for the server to listen on.")
@@ -39,7 +39,7 @@ parser.add_argument("--port", type=int, help="Port number for the server to list
 parser.add_argument("--log_history", action='store_true', default=False, help="Enable logging of request history.")
 parser.add_argument("--loading_half_params", action='store_true', default=False,
                     help="Enable loading model parameters in half precision to reduce memory usage.")
-parser.add_argument("--use_tile_vae", action='store_true', default=False,
+parser.add_argument("--use_tile_vae", action='store_true', default=True,
                     help="Enable tiling for the VAE to handle larger images with limited memory.")
 parser.add_argument("--outputs_folder_button", type=str, default=False, help="Outputs Folder Button Will Be Enabled")
 parser.add_argument("--use_fast_tile", action='store_true', default=False,
@@ -67,7 +67,6 @@ parser.add_argument("--debug", action='store_true', default=False,
 parser.add_argument("--dont_move_cpu", action='store_true', default=False,
                     help="Disables moving models to the CPU after completed. If you have sufficient VRAM enable this.")
 
-
 args = parser.parse_args()
 ui_helpers.ui_args = args
 current_video_fps = 0
@@ -76,6 +75,7 @@ video_start = 0
 video_end = 0
 last_input_path = None
 last_video_params = None
+meta_upload = False
 
 total_vram = 100000
 auto_unload = False
@@ -153,20 +153,18 @@ def update_start_time(src_file, upscale_size, start_time):
     global video_start
     video_start = start_time
     target_res_text = update_target_resolution(src_file, upscale_size)
-    return gr.update(value=target_res_text)
+    return gr.update(value=target_res_text, visible=target_res_text != "")
 
 
 def update_end_time(src_file, upscale_size, end_time):
     global video_end
     video_end = end_time
     target_res_text = update_target_resolution(src_file, upscale_size)
-    return gr.update(value=target_res_text)
+    return gr.update(value=target_res_text, visible=target_res_text != "")
 
 
 def select_style(style_name, current_prompt=None, values=False):
-    print(f"Selected style: {style_name}")
     style_list = list_styles()
-    print(f"Selected style: {style_name}")
 
     if style_name in style_list.keys():
         style_pos, style_neg, style_llava = style_list[style_name]
@@ -179,12 +177,29 @@ def select_style(style_name, current_prompt=None, values=False):
 
 
 import platform
+
+
 def open_folder():
     open_folder_path = os.path.abspath(args.outputs_folder)
     if platform.system() == "Windows":
         os.startfile(open_folder_path)
     elif platform.system() == "Linux":
         os.system(f'xdg-open "{open_folder_path}"')
+
+
+def set_info_attributes(elements_to_set: Dict[str, Any]):
+    output = {}
+    for key, value in elements_to_set.items():
+        if not getattr(value, 'elem_id', None):
+            setattr(value, 'elem_id', key)
+        classes = getattr(value, 'elem_classes', None)
+        if isinstance(classes, list):
+            if "info-btn" not in classes:
+                classes.append("info-button")
+                setattr(value, 'elem_classes', classes)
+        output[key] = value
+    return output
+
 
 def list_models():
     model_dir = args.ckpt_dir
@@ -345,7 +360,6 @@ def clear_llava():
     llava_agent = None
     gc.collect()
     torch.cuda.empty_cache()
-    
 
 
 def all_to_cpu_background():
@@ -439,7 +453,8 @@ def update_inputs(input_file, upscale_amount):
     if is_image(input_file):
         image_input = gr.update(visible=True, value=input_file, sources=[], label="Input Image")
         file_input = gr.update(visible=False)
-        res_output = gr.update(value=update_target_resolution(input_file, upscale_amount))
+        target_res = update_target_resolution(input_file, upscale_amount)
+        res_output = gr.update(value=target_res, visible=target_res != "")
     elif is_video(input_file):
         video_attributes = ui_helpers.get_video_params(input_file)
         video_start = 0
@@ -456,14 +471,14 @@ def update_inputs(input_file, upscale_amount):
         image_input = gr.update(visible=True, value=video_frame, sources=[], label="Input Video")
         file_input = gr.update(visible=False)
         video_fps = gr.update(value=current_video_fps)
-        res_output = gr.update(value=update_target_resolution(input_file, upscale_amount))
+        target_res = update_target_resolution(input_file, upscale_amount)
+        res_output = gr.update(value=target_res, visible=target_res != "")
     elif input_file is None:
         file_input = gr.update(visible=True, value=None)
     return file_input, image_input, video_slider, res_output, video_start_time, video_end_time, video_current_time, video_fps, video_total_frames
 
 
 def update_target_resolution(img, do_upscale):
-    # Read the input image dimensions
     global last_input_path, last_video_params
     if img is None:
         last_video_params = None
@@ -489,27 +504,31 @@ def update_target_resolution(img, do_upscale):
         last_video_params = None
         return ""
 
-    # Apply the do_upscale ratio
     width *= do_upscale
     height *= do_upscale
 
-    # Ensure both dimensions are at least 1024 pixels
     if min(width, height) < 1024:
         do_upscale_factor = 1024 / min(width, height)
         width *= do_upscale_factor
         height *= do_upscale_factor
 
-    output = f"""
-Input: {int(width_org)}x{int(height_org)} px, {width_org * height_org / 1e6:.2f} Megapixels 
-Estimated Output Resolution: {int(width)}x{int(height)} px, {width * height / 1e6:.2f} Megapixels
-"""
+    output_lines = [
+        f"<td style='padding: 8px; border-bottom: 1px solid #ddd;'>Input: {int(width_org)}x{int(height_org)} px, {width_org * height_org / 1e6:.2f} Megapixels</td>",
+        f"<td style='padding: 8px; border-bottom: 1px solid #ddd;'>Estimated Output Resolution: {int(width)}x{int(height)} px, {width * height / 1e6:.2f} Megapixels</td>",
+    ]
+
     if total_video_frames > 0 and is_video(img):
         selected_video_frames = video_end - video_start
         total_video_time = int(selected_video_frames / current_video_fps)
-        output += f"""
-Selected video frames: {selected_video_frames}
-Total video time: {total_video_time} seconds
-"""
+        output_lines += [
+            f"<td style='padding: 8px; border-bottom: 1px solid #ddd;'>Selected video frames: {selected_video_frames}</td>",
+            f"<td style='padding: 8px; border-bottom: 1px solid #ddd;'>Total video time: {total_video_time} seconds</td>"
+        ]
+
+    output = '<table style="width:100%;"><tr>'
+    # Fix here: Convert each pair of <td> elements into a single string before joining
+    output += ''.join(''.join(output_lines[i:i + 2]) for i in range(0, len(output_lines), 2))
+    output += '</tr></table>'
     return output
 
 
@@ -668,6 +687,8 @@ def start_single_process(*element_values):
     img_data = []
 
     if is_video(input_image):
+        # Store the original video path for later
+        status_container.source_video_path = input_image
         status_container.is_video = True
         extracted_folder = os.path.join(args.outputs_folder, "extracted_frames")
         if os.path.exists(extracted_folder):
@@ -728,7 +749,8 @@ def start_batch_process(*element_values):
     if len(outputs_folder) < 2:
         outputs_folder = args.outputs_folder
 
-    image_files = [file for file in os.listdir(batch_process_folder) if is_image(os.path.join(batch_process_folder, file))]
+    image_files = [file for file in os.listdir(batch_process_folder) if
+                   is_image(os.path.join(batch_process_folder, file))]
 
     # Make a dictionary to store the image data and path
     img_data = []
@@ -775,7 +797,7 @@ def llava_process(inputs: List[MediaData], temp, p, question=None, save_captions
         img = md.media_data
         img_path = md.media_path
         progress(step / total_steps, desc=f"Processing image {step}/{len(inputs)} with LLaVA...")
-        if img is None: ## this is for llava and video
+        if img is None:  ## this is for llava and video
             img = Image.open(img_path)
             img = np.array(img)
         lq = HWC3(img)
@@ -806,7 +828,7 @@ def update_video_slider(start_time, current_time, end_time, fps, total_frames, s
     video_end = end_time
     video_frame = ui_helpers.get_video_frame(src_file, current_time)
     target_res_text = update_target_resolution(src_file, upscale_size)
-    return gr.update(value=video_frame), gr.update(value=target_res_text)
+    return gr.update(value=video_frame), gr.update(value=target_res_text, visible=target_res_text != "")
 
 
 def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
@@ -861,7 +883,7 @@ def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
                 printt(f"Loading caption from {cap_path}...")
                 with open(cap_path, 'r') as cf:
                     img_prompt = cf.read()
-        
+
         img = HWC3(img)
         printt("Upscaling image (pre)...")
         img = upscale_image(img, upscale, unit_resolution=32, min_size=1024)
@@ -927,10 +949,10 @@ def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
                     face = torch.tensor(face, dtype=torch.float32).permute(2, 0, 1).unsqueeze(0).to(SUPIR_device)[:, :3,
                            :, :]
                     faces.append(face)
-                
+
                 for index, face in enumerate(faces):
                     progress(index / len(faces), desc=f"Upscaling Face {index}/{len(faces)}")
-                    caption = face_captions[0] #currently we dont have multiple captions for faces
+                    caption = face_captions[0]  # currently we dont have multiple captions for faces
                     gen_params['face_prompt'] = caption
                     samples = process_sample(model, face, [caption], face_resolution, is_face=True)
                     samples = torch.nn.functional.interpolate(samples, size=face_helper.face_size, mode='bilinear',
@@ -955,9 +977,9 @@ def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
                     result = face_helper.paste_faces_to_input_image(upsample_img=_bg[0])
                 else:
                     result = _bg[0]
-            
+
             # I couldnt make this part
-            #if not apply_bg and apply_face:
+            # if not apply_bg and apply_face:
             #    face_helper.get_inverse_affine(None)
             #    result = face_helper.paste_faces_to_input_image(upsample_img=lq)
 
@@ -969,7 +991,6 @@ def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
                         einops.rearrange(samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().round().clip(
                     0, 255).astype(np.uint8)
                 result = x_samples[0]
-
 
             gen_params['caption'] = img_prompt
             image_generation_time = time.time() - start_time
@@ -1003,7 +1024,7 @@ def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
     main_end_time = time.time()
     global unique_counter
     unique_counter = unique_counter + 1
-    return f"Image Upscaling Completed: processed {processed_images} images at in {main_end_time - main_begin_time:.2f} seconds #{unique_counter}"
+    return f"Image Upscaling Completed: processed {total_images} images at in {main_end_time - main_begin_time:.2f} seconds #{unique_counter}"
 
 
 def batch_process(img_data,
@@ -1011,7 +1032,7 @@ def batch_process(img_data,
                   diff_dtype, edm_steps, face_prompt, face_resolution, linear_CFG, linear_s_stage2,
                   make_comparison_video, model_select, n_prompt, num_images, num_samples, qs, random_seed,
                   s_cfg, s_churn, s_noise, s_stage1, s_stage2, sampler, save_captions, seed, spt_linear_CFG,
-                  spt_linear_s_stage2, temperature, top_p, upscale,auto_unload_llava, progress=gr.Progress()
+                  spt_linear_s_stage2, temperature, top_p, upscale, auto_unload_llava, progress=gr.Progress()
                   ):
     global is_processing, llava_agent, model, status_container
     ckpt_select = get_ckpt_path(ckpt_select)
@@ -1050,7 +1071,7 @@ def batch_process(img_data,
     total_steps = total_supir_steps + total_llava_steps + 1
     counter = 0
     # Disable llava for video...because...uh...yeah, video.
-    #if status_container.is_video:
+    # if status_container.is_video:
     #   apply_llava = False
     progress(0, desc=f"Processing {total_images} images...")
     printt(f"Processing {total_images} images...", reset=True)
@@ -1094,7 +1115,9 @@ def batch_process(img_data,
         output_format = params.get('output_format', 'mp4')
         video_start = params.get('video_start', None)
         video_end = params.get('video_end', None)
-        media_output = compile_video(extracted_folder, args.outputs_folder, status_container.video_params,
+        source_video_path = status_container.source_video_path
+        media_output = compile_video(source_video_path, extracted_folder, args.outputs_folder,
+                                     status_container.video_params,
                                      output_quality, output_format, video_start, video_end)
         if media_output:
             status_container.image_data = [media_output]
@@ -1227,28 +1250,28 @@ def stop_batch_upscale(progress=gr.Progress()):
 
 
 def load_and_reset(param_setting):
-    e_steps = 50 # steps
-    sstage2 = 1 # Stage2 Guidance Strength
-    sstage1 = -1.0 # Stage1 Guidance Strength
-    schurn = 5 # S Churn default 5 
-    snoise = 1.003 # S Noise defualt 1.003
+    e_steps = 50  # steps
+    sstage2 = 1  # Stage2 Guidance Strength
+    sstage1 = -1.0  # Stage1 Guidance Strength
+    schurn = 5  # S Churn default 5
+    snoise = 1.003  # S Noise defualt 1.003
     ap = 'Cinematic, High Contrast, highly detailed, taken using a Canon EOS R camera, hyper detailed photo - ' \
          'realistic maximum detail, 32k, Color Grading, ultra HD, extreme meticulous detailing, skin pore ' \
          'detailing, hyper sharpness, perfect without deformations.'
     np = 'painting, oil painting, illustration, drawing, art, sketch, oil painting, cartoon, CG Style, ' \
          '3D render, unreal engine, blurring, dirty, messy, worst quality, low quality, frames, watermark, ' \
          'signature, jpeg artifacts, deformed, lowres, over-smooth'
-    cfix_type = 'Wavelet' 
-    l_s_stage2 = False # Linear Stage2 Guidance checkbox
+    cfix_type = 'Wavelet'
+    l_s_stage2 = False  # Linear Stage2 Guidance checkbox
     l_s_s_stage2 = 0
-    
-    l_cfg = True # Linear CFG checkbox
+
+    l_cfg = True  # Linear CFG checkbox
     if param_setting == "Quality":
-        s_cfg = 7.5 # text cfg
-        spt_linear_CFG = 4.0 # Linear CFG Start
+        s_cfg = 7.5  # text cfg
+        spt_linear_CFG = 4.0  # Linear CFG Start
     elif param_setting == "Fidelity":
-        s_cfg = 4.0 # text cfg
-        spt_linear_CFG = 1.0 # Linear CFG Start
+        s_cfg = 4.0  # text cfg
+        spt_linear_CFG = 1.0  # Linear CFG Start
     else:
         raise NotImplementedError
     return e_steps, s_cfg, sstage2, sstage1, schurn, snoise, ap, np, cfix_type, l_cfg, l_s_stage2, spt_linear_CFG, l_s_s_stage2
@@ -1340,13 +1363,25 @@ dl_symbol = "\U00002B73"  # ⭳
 fullscreen_symbol = "\U000026F6"  # ⛶
 
 
-def show_output(selected_file):
+def update_meta(selected_file):
+    # Returns [meta_image, meta_video]
+    global meta_upload
+    if meta_upload is not None and selected_file == "" and selected_file is not None:
+        # Don't change if cleared from upload
+        return gr.update(visible=True, value=None), gr.update()
     if is_video(selected_file):
         return gr.update(visible=False), gr.update(visible=True, value=selected_file)
     elif is_image(selected_file):
-        return gr.update(visible=True, value=selected_file), gr.update(visible=False)
+        return gr.update(visible=True, value=selected_file, sources=[]), gr.update(visible=False)
     else:
-        return gr.update(visible=False), gr.update(visible=False)
+        return gr.update(visible=True, value=None), gr.update(visible=False)
+
+
+def clear_meta():
+    global meta_upload
+    meta_upload = None
+    # Returns [meta_image, meta_video, meta_file_browser, meta_file_upload, metadata_output]
+    return gr.update(visible=False), gr.update(visible=False), gr.update(visible=True), gr.update(value=None), gr.update(value=None)
 
 
 default_llava_prompt = "Describe this image and its style in a very detailed manner. The image is a realistic photography, not an art painting."
@@ -1374,6 +1409,8 @@ with (block):
         with gr.Column(scale=1):
             with gr.Row():
                 output_label = gr.Label(label="Progress", elem_classes=["progress_label"])
+            with gr.Row():
+                target_res_textbox = gr.HTML(value="", visible=False, show_label=False)
         with gr.Row(equal_height=True):
             with gr.Column(elem_classes=['preview_col']) as input_col:
                 src_input_file = gr.File(type="filepath", label="Input", elem_id="file-input",
@@ -1410,7 +1447,6 @@ with (block):
         with gr.Row():
             with gr.Column():
                 with gr.Accordion("General options", open=True):
-                    target_res_textbox = gr.Textbox(label="Input/Output Data", value="", interactive=False)
                     if args.debug:
                         populate_slider_button = gr.Button(value="Populate Slider")
                         populate_gallery_button = gr.Button(value="Populate Gallery")
@@ -1419,9 +1455,11 @@ with (block):
                         populate_gallery_button.click(fn=populate_gallery, outputs=[result_gallery, result_slider],
                                                       show_progress=True, queue=True)
                     with gr.Row():
-                        with gr.Column():
-                            apply_llava_checkbox = gr.Checkbox(label="Apply LLaVa", value=False)
-                            apply_supir_checkbox = gr.Checkbox(label="Apply SUPIR", value=True)
+                        upscale_slider = gr.Slider(label="Upscale Size", minimum=1, maximum=8, value=1, step=0.1)
+                    with gr.Row():
+                        apply_llava_checkbox = gr.Checkbox(label="Apply LLaVa", value=False)
+                        apply_supir_checkbox = gr.Checkbox(label="Apply SUPIR", value=True)
+                    with gr.Row():
                         with gr.Column():
                             prompt_style_dropdown = gr.Dropdown(label="Prompt Style",
                                                                 choices=prompt_styles_keys,
@@ -1429,31 +1467,31 @@ with (block):
                                                                     prompt_styles_keys) > 0 else "")
                             refresh_styles_button = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"],
                                                               size="sm")
-                    show_select = args.ckpt_browser
-                    with gr.Row(elem_id="model_select_row", visible=show_select):
-                        ckpt_select_dropdown = gr.Dropdown(label="Model", choices=list_models(),
-                                                           value=selected_model(),
-                                                           interactive=True)
-                        refresh_models_button = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"],
-                                                          size="sm")
+                        show_select = args.ckpt_browser
+                        with gr.Column():
+                            with gr.Row(elem_id="model_select_row", visible=show_select):
+                                ckpt_select_dropdown = gr.Dropdown(label="Model", choices=list_models(),
+                                                                   value=selected_model(),
+                                                                   interactive=True)
+                                refresh_models_button = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"],
+                                                                  size="sm")
                     with gr.Row(elem_id="model_select_row", visible=show_select):
                         ckpt_type = gr.Dropdown(label="Checkpoint Type", choices=["Standard SDXL", "SDXL Lightning"],
                                                 value="Standard SDXL")
 
-                    upscale_slider = gr.Slider(label="Upscale Size", minimum=1, maximum=8, value=1, step=0.1)
                     prompt_textbox = gr.Textbox(label="Prompt", value="")
                     face_prompt_textbox = gr.Textbox(label="Face Prompt",
                                                      placeholder="Optional, uses main prompt if not provided",
                                                      value="")
                 with gr.Accordion("LLaVA options", open=False):
                     with gr.Column():
-                        auto_unload_llava_checkbox = gr.Checkbox(label="Auto Unload LLaVA (Low VRAM)", value=auto_unload)
+                        auto_unload_llava_checkbox = gr.Checkbox(label="Auto Unload LLaVA (Low VRAM)",
+                                                                 value=auto_unload)
                         setattr(auto_unload_llava_checkbox, "do_not_save_to_config", True)
-
+                    qs_textbox = gr.Textbox(label="LLaVA prompt",value=llava_style_prompt)
                     temperature_slider = gr.Slider(label="Temperature", minimum=0., maximum=1.0, value=0.2, step=0.1)
                     top_p_slider = gr.Slider(label="Top P", minimum=0., maximum=1.0, value=0.7, step=0.1)
-                    qs_textbox = gr.Textbox(label="Question",
-                                            value=llava_style_prompt)
+
                 with gr.Accordion("SUPIR options", open=False):
                     with gr.Row():
                         with gr.Column():
@@ -1499,7 +1537,8 @@ with (block):
                             outputs_folder_textbox = gr.Textbox(
                                 label="Batch Output Path - Leave empty to save to default.",
                                 placeholder="R:\SUPIR video\comparison_images\outputs")
-                            save_captions_checkbox = gr.Checkbox(label="Save Captions - Saved In Outputs Folder", value=True)
+                            save_captions_checkbox = gr.Checkbox(label="Save Captions",
+                                                                 value=True)
                 with gr.Accordion("Advanced options", open=False):
                     with gr.Row():
                         with gr.Column():
@@ -1544,8 +1583,7 @@ with (block):
                 with gr.Accordion("Comparison Video options", open=False):
                     with gr.Row():
                         make_comparison_video_checkbox = gr.Checkbox(
-                            label="Generate Comparison Video (Input vs Output) (You need to have FFmpeg installed)",
-                            value=False)
+                            label="Generate Comparison Video", value=False)
                     with gr.Row(visible=True) as compare_video_row:
                         video_duration_textbox = gr.Textbox(label="Duration", value="5")
                         video_fps_textbox = gr.Textbox(label="FPS", value="30")
@@ -1556,15 +1594,13 @@ with (block):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
 
-    with gr.Tab("Outputs - Metadata", elem_id="output_tab") as outputsTab:
+    with gr.Tab("Outputs", elem_id="output_tab") as outputsTab:
         with gr.Row(elem_id="output_view_row"):
-                
             with gr.Column(elem_classes=["output_view_col"]):
                 with gr.Row():
-                    metadata_image_input = gr.Image(type="filepath", label="Upload Metadata Image", height=150)
-                with gr.Row():
-                    output_files = gr.FileExplorer(label="Output Folder", file_count="single", elem_id="output_folder",
-                                                   root_dir=args.outputs_folder, height="85vh")
+                    meta_file_browser = gr.FileExplorer(label="Output Folder", file_count="single",
+                                                        elem_id="output_folder",
+                                                        root_dir=args.outputs_folder, height="85vh")
                     output_files_refresh_btn = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"],
                                                          size="sm")
 
@@ -1573,18 +1609,15 @@ with (block):
                         return gr.update(value=args.outputs_folder)
 
 
-                    output_files_refresh_btn.click(fn=refresh_output_files, outputs=[output_files],
+                    output_files_refresh_btn.click(fn=refresh_output_files, outputs=[meta_file_browser],
                                                    show_progress=True, queue=True)
             with gr.Column(elem_classes=["output_view_col"]):
-                output_image = gr.Image(type="filepath", label="Output Image", elem_id="output_image", visible=False,
-                                        height="42.5vh")
-                output_video = gr.Video(label="Output Video", elem_id="output_video", visible=False, height="42.5vh")
+                meta_image = gr.Image(type="filepath", label="Output Image", elem_id="output_image", visible=True, height="42.5vh", sources=["upload"])
+                meta_video = gr.Video(label="Output Video", elem_id="output_video", visible=False, height="42.5vh")
                 metadata_output = gr.Textbox(label="Image Metadata", lines=25, max_lines=50, elem_id="output_metadata")
-                output_image.change(fn=read_image_metadata, inputs=[output_image],
-                                    outputs=[metadata_output])
 
     with gr.Tab("About"):
-        gr.HTML(f"<H2>About {SUPIR_REVISION}</H2>")
+        gr.HTML(f"<H2>SUPIR Version {SUPIR_REVISION}</H2>")
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
@@ -1601,8 +1634,6 @@ with (block):
         prompt_textbox, result_gallery, result_slider, result_video, comparison_video, event_id, seed_slider,
         face_gallery
     ]
-    
-    metadata_image_input.change(fn=read_image_metadata, inputs=[metadata_image_input], outputs=[metadata_output])
 
     refresh_models_button.click(fn=refresh_models_click, outputs=[ckpt_select_dropdown])
     refresh_styles_button.click(fn=refresh_styles_click, outputs=[prompt_style_dropdown])
@@ -1657,6 +1688,16 @@ with (block):
         "video_width": video_width_textbox,
     }
 
+    extra_info_elements = {
+        "prompt_style": prompt_style_dropdown,
+        "checkpoint_type": ckpt_type,
+    }
+
+    elements_dict = set_info_attributes(elements_dict)
+
+    # Add items here that are not passed to processing for labels
+    extra_info_elements = set_info_attributes(extra_info_elements)
+
     elements = list(elements_dict.values())
 
     start_single_button.click(fn=start_single_process, inputs=elements, outputs=output_label,
@@ -1665,7 +1706,7 @@ with (block):
                              show_progress=True, queue=True)
     stop_batch_button.click(fn=stop_batch_upscale, show_progress=True, queue=True)
     reset_button.click(fn=load_and_reset, inputs=[param_setting_select],
-                       outputs=[edm_steps_slider, s_cfg_slider, s_stage2_slider,s_stage1_slider, s_churn_slider,
+                       outputs=[edm_steps_slider, s_cfg_slider, s_stage2_slider, s_stage1_slider, s_churn_slider,
                                 s_noise_slider, a_prompt_textbox, n_prompt_textbox,
                                 color_fix_type_radio, linear_cfg_checkbox, linear_s_stage2_checkbox,
                                 spt_linear_cfg_slider, spt_linear_s_stage2_slider])
@@ -1674,7 +1715,8 @@ with (block):
     output_label.change(fn=update_elements, show_progress=False, queue=True, inputs=[output_label],
                         outputs=output_elements)
 
-    output_files.change(fn=show_output, inputs=[output_files], outputs=[output_image, output_video])
+    meta_file_browser.change(fn=update_meta, inputs=[meta_file_browser], outputs=[meta_image, meta_video])
+    meta_image.change(fn=read_image_metadata, inputs=[meta_image], outputs=[metadata_output])
 
     prompt_style_dropdown.change(fn=select_style, inputs=[prompt_style_dropdown, qs_textbox],
                                  outputs=[a_prompt_textbox, n_prompt_textbox, qs_textbox])
@@ -1706,8 +1748,11 @@ with (block):
                      video_fps_number, video_total_frames_number, src_input_file, upscale_slider]
     video_current_time_number.change(fn=update_video_slider, inputs=video_sliders,
                                      outputs=[src_image_display, target_res_textbox], js="update_slider")
-    video_start_time_number.change(fn=update_start_time, inputs=[src_input_file, upscale_slider, video_start_time_number], outputs=target_res_textbox)
-    video_end_time_number.change(fn=update_end_time, inputs=[src_input_file, upscale_slider, video_end_time_number], outputs=target_res_textbox)
+    video_start_time_number.change(fn=update_start_time,
+                                   inputs=[src_input_file, upscale_slider, video_start_time_number],
+                                   outputs=target_res_textbox)
+    video_end_time_number.change(fn=update_end_time, inputs=[src_input_file, upscale_slider, video_end_time_number],
+                                 outputs=target_res_textbox)
 
 
     def do_nothing():
