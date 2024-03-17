@@ -1568,7 +1568,7 @@ with (block):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
 
-    with gr.Tab("Outputs - Metadata", elem_id="output_tab") as outputsTab:
+    with gr.Tab("Outputs", elem_id="output_tab") as outputsTab:
         with gr.Row(elem_id="output_view_row"):
             with gr.Column(elem_classes=["output_view_col"]):
                 with gr.Row():
