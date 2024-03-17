@@ -39,7 +39,7 @@ parser.add_argument("--port", type=int, help="Port number for the server to list
 parser.add_argument("--log_history", action='store_true', default=False, help="Enable logging of request history.")
 parser.add_argument("--loading_half_params", action='store_true', default=False,
                     help="Enable loading model parameters in half precision to reduce memory usage.")
-parser.add_argument("--use_tile_vae", action='store_true', default=False,
+parser.add_argument("--use_tile_vae", action='store_true', default=True,
                     help="Enable tiling for the VAE to handle larger images with limited memory.")
 parser.add_argument("--outputs_folder_button", type=str, default=False, help="Outputs Folder Button Will Be Enabled")
 parser.add_argument("--use_fast_tile", action='store_true', default=False,
@@ -164,9 +164,7 @@ def update_end_time(src_file, upscale_size, end_time):
 
 
 def select_style(style_name, current_prompt=None, values=False):
-    print(f"Selected style: {style_name}")
     style_list = list_styles()
-    print(f"Selected style: {style_name}")
 
     if style_name in style_list.keys():
         style_pos, style_neg, style_llava = style_list[style_name]
@@ -668,6 +666,8 @@ def start_single_process(*element_values):
     img_data = []
 
     if is_video(input_image):
+        # Store the original video path for later
+        status_container.source_video_path = input_image
         status_container.is_video = True
         extracted_folder = os.path.join(args.outputs_folder, "extracted_frames")
         if os.path.exists(extracted_folder):
@@ -1094,7 +1094,8 @@ def batch_process(img_data,
         output_format = params.get('output_format', 'mp4')
         video_start = params.get('video_start', None)
         video_end = params.get('video_end', None)
-        media_output = compile_video(extracted_folder, args.outputs_folder, status_container.video_params,
+        source_video_path = status_container.source_video_path
+        media_output = compile_video(source_video_path, extracted_folder, args.outputs_folder, status_container.video_params,
                                      output_quality, output_format, video_start, video_end)
         if media_output:
             status_container.image_data = [media_output]

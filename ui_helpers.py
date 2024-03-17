@@ -112,13 +112,19 @@ def get_video_params(video_path: str) -> Dict[str, str]:
         return {}
 
 
-def compile_video(src_path: str, output_path: str, video_params: Dict[str, str], quality: int = 1,
+def compile_video(src_video: str, extracted_path: str, output_path: str, video_params: Dict[str, str], quality: int = 1,
                   file_type: str = 'mp4', video_start=None, video_end=None) -> bool:
     # if quality is a string, just make it 1
     if isinstance(quality, str):
         quality = 1.0
     output_path_with_type = f"{output_path}.{file_type}"
-    temp_frames_pattern = os.path.join(src_path, '%04d.png')
+    if os.path.exists(output_path_with_type):
+        existing_idx = 1
+        while os.path.exists(f"{output_path}_{existing_idx}.{file_type}"):
+            existing_idx += 1
+        output_path_with_type = f"{output_path}_{existing_idx}.{file_type}"
+
+    temp_frames_pattern = os.path.join(extracted_path, '%04d.png')
     video_fps = video_params['framerate']
     output_video_encoder = 'libx264'
     commands = ['-hwaccel', 'auto', '-r', str(video_fps), '-i', temp_frames_pattern, '-c:v',
@@ -133,8 +139,8 @@ def compile_video(src_path: str, output_path: str, video_params: Dict[str, str],
     commands.extend(['-pix_fmt', 'yuv420p', '-colorspace', 'bt709', '-y', output_path_with_type])
     printt(f"Merging frames to video: '{' '.join(commands)}'")
     if run_ffmpeg_progress(commands):
-        image_data = MediaData(src_path, 'video')
-        if restore_audio(src_path, output_path_with_type, video_fps, video_start, video_end):
+        image_data = MediaData(output_path_with_type, 'video')
+        if restore_audio(src_video, output_path_with_type, video_fps, video_start, video_end):
             printt(f"Audio restored to video successfully: {output_path_with_type}")
         else:
             printt(f"Audio restoration failed: {output_path_with_type}")
