@@ -1511,7 +1511,7 @@ with (block):
                             outputs_folder_textbox = gr.Textbox(
                                 label="Batch Output Path - Leave empty to save to default.",
                                 placeholder="R:\SUPIR video\comparison_images\outputs")
-                            save_captions_checkbox = gr.Checkbox(label="Save Captions - Saved In Outputs Folder",
+                            save_captions_checkbox = gr.Checkbox(label="Save Captions",
                                                                  value=True)
                 with gr.Accordion("Advanced options", open=False):
                     with gr.Row():
@@ -1595,7 +1595,7 @@ with (block):
                                     outputs=[metadata_output])
 
     with gr.Tab("About"):
-        gr.HTML(f"<H2>About {SUPIR_REVISION}</H2>")
+        gr.HTML(f"<H2>SUPIR Version {SUPIR_REVISION}</H2>")
         gr.Markdown(title_md)
         with gr.Row():
             gr.Markdown(claim_md)
