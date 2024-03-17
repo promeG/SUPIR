@@ -30,7 +30,7 @@ from SUPIR.utils.status_container import StatusContainer, MediaData
 from llava.llava_agent import LLavaAgent
 from ui_helpers import is_video, extract_video, compile_video, is_image, get_video_params, printt
 
-SUPIR_REVISION = "v40"
+SUPIR_REVISION = "v41"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1', help="IP address for the server to listen on.")
@@ -1227,27 +1227,28 @@ def stop_batch_upscale(progress=gr.Progress()):
 
 
 def load_and_reset(param_setting):
-    e_steps = 50
-    sstage2 = 1.0
-    sstage1 = -1.0
-    schurn = 5
-    snoise = 1.003
+    e_steps = 50 # steps
+    sstage2 = 1 # Stage2 Guidance Strength
+    sstage1 = -1.0 # Stage1 Guidance Strength
+    schurn = 5 # S Churn default 5 
+    snoise = 1.003 # S Noise defualt 1.003
     ap = 'Cinematic, High Contrast, highly detailed, taken using a Canon EOS R camera, hyper detailed photo - ' \
          'realistic maximum detail, 32k, Color Grading, ultra HD, extreme meticulous detailing, skin pore ' \
          'detailing, hyper sharpness, perfect without deformations.'
     np = 'painting, oil painting, illustration, drawing, art, sketch, oil painting, cartoon, CG Style, ' \
          '3D render, unreal engine, blurring, dirty, messy, worst quality, low quality, frames, watermark, ' \
          'signature, jpeg artifacts, deformed, lowres, over-smooth'
-    cfix_type = 'Wavelet'
-    l_s_stage2 = 0.0
-    l_s_s_stage2 = False
-    l_cfg = True
+    cfix_type = 'Wavelet' 
+    l_s_stage2 = False # Linear Stage2 Guidance checkbox
+    l_s_s_stage2 = 0
+    
+    l_cfg = True # Linear CFG checkbox
     if param_setting == "Quality":
-        s_cfg = 7.5
-        spt_linear_CFG = 4.0
+        s_cfg = 7.5 # text cfg
+        spt_linear_CFG = 4.0 # Linear CFG Start
     elif param_setting == "Fidelity":
-        s_cfg = 4.0
-        spt_linear_CFG = 1.0
+        s_cfg = 4.0 # text cfg
+        spt_linear_CFG = 1.0 # Linear CFG Start
     else:
         raise NotImplementedError
     return e_steps, s_cfg, sstage2, sstage1, schurn, snoise, ap, np, cfix_type, l_cfg, l_s_stage2, spt_linear_CFG, l_s_s_stage2
@@ -1435,6 +1436,7 @@ with (block):
                                                            interactive=True)
                         refresh_models_button = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"],
                                                           size="sm")
+                    with gr.Row(elem_id="model_select_row", visible=show_select):
                         ckpt_type = gr.Dropdown(label="Checkpoint Type", choices=["Standard SDXL", "SDXL Lightning"],
                                                 value="Standard SDXL")
 
@@ -1663,7 +1665,7 @@ with (block):
                              show_progress=True, queue=True)
     stop_batch_button.click(fn=stop_batch_upscale, show_progress=True, queue=True)
     reset_button.click(fn=load_and_reset, inputs=[param_setting_select],
-                       outputs=[edm_steps_slider, s_cfg_slider, s_stage2_slider, s_churn_slider,
+                       outputs=[edm_steps_slider, s_cfg_slider, s_stage2_slider,s_stage1_slider, s_churn_slider,
                                 s_noise_slider, a_prompt_textbox, n_prompt_textbox,
                                 color_fix_type_radio, linear_cfg_checkbox, linear_s_stage2_checkbox,
                                 spt_linear_cfg_slider, spt_linear_s_stage2_slider])
