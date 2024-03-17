@@ -75,6 +75,7 @@ video_start = 0
 video_end = 0
 last_input_path = None
 last_video_params = None
+meta_upload = False
 
 total_vram = 100000
 auto_unload = False
@@ -1362,13 +1363,25 @@ dl_symbol = "\U00002B73"  # ⭳
 fullscreen_symbol = "\U000026F6"  # ⛶
 
 
-def show_output(selected_file):
+def update_meta(selected_file):
+    # Returns [meta_image, meta_video]
+    global meta_upload
+    if meta_upload is not None and selected_file == "" and selected_file is not None:
+        # Don't change if cleared from upload
+        return gr.update(visible=True, value=None), gr.update()
     if is_video(selected_file):
         return gr.update(visible=False), gr.update(visible=True, value=selected_file)
     elif is_image(selected_file):
-        return gr.update(visible=True, value=selected_file), gr.update(visible=False)
+        return gr.update(visible=True, value=selected_file, sources=[]), gr.update(visible=False)
     else:
-        return gr.update(visible=False), gr.update(visible=False)
+        return gr.update(visible=True, value=None), gr.update(visible=False)
+
+
+def clear_meta():
+    global meta_upload
+    meta_upload = None
+    # Returns [meta_image, meta_video, meta_file_browser, meta_file_upload, metadata_output]
+    return gr.update(visible=False), gr.update(visible=False), gr.update(visible=True), gr.update(value=None), gr.update(value=None)
 
 
 default_llava_prompt = "Describe this image and its style in a very detailed manner. The image is a realistic photography, not an art painting."
@@ -1586,10 +1599,9 @@ with (block):
         with gr.Row(elem_id="output_view_row"):
             with gr.Column(elem_classes=["output_view_col"]):
                 with gr.Row():
-                    metadata_image_input = gr.Image(type="filepath", label="Upload Metadata Image", height=150)
-                with gr.Row():
-                    output_files = gr.FileExplorer(label="Output Folder", file_count="single", elem_id="output_folder",
-                                                   root_dir=args.outputs_folder, height="85vh")
+                    meta_file_browser = gr.FileExplorer(label="Output Folder", file_count="single",
+                                                        elem_id="output_folder",
+                                                        root_dir=args.outputs_folder, height="85vh")
                     output_files_refresh_btn = gr.Button(value=refresh_symbol, elem_classes=["refresh_button"],
                                                          size="sm")
 
@@ -1598,15 +1610,12 @@ with (block):
                         return gr.update(value=args.outputs_folder)
 
 
-                    output_files_refresh_btn.click(fn=refresh_output_files, outputs=[output_files],
+                    output_files_refresh_btn.click(fn=refresh_output_files, outputs=[meta_file_browser],
                                                    show_progress=True, queue=True)
             with gr.Column(elem_classes=["output_view_col"]):
-                output_image = gr.Image(type="filepath", label="Output Image", elem_id="output_image", visible=False,
-                                        height="42.5vh")
-                output_video = gr.Video(label="Output Video", elem_id="output_video", visible=False, height="42.5vh")
+                meta_image = gr.Image(type="filepath", label="Output Image", elem_id="output_image", visible=True, height="42.5vh", sources=["upload"])
+                meta_video = gr.Video(label="Output Video", elem_id="output_video", visible=False, height="42.5vh")
                 metadata_output = gr.Textbox(label="Image Metadata", lines=25, max_lines=50, elem_id="output_metadata")
-                output_image.change(fn=read_image_metadata, inputs=[output_image],
-                                    outputs=[metadata_output])
 
     with gr.Tab("About"):
         gr.HTML(f"<H2>SUPIR Version {SUPIR_REVISION}</H2>")
@@ -1626,8 +1635,6 @@ with (block):
         prompt_textbox, result_gallery, result_slider, result_video, comparison_video, event_id, seed_slider,
         face_gallery
     ]
-
-    metadata_image_input.change(fn=read_image_metadata, inputs=[metadata_image_input], outputs=[metadata_output])
 
     refresh_models_button.click(fn=refresh_models_click, outputs=[ckpt_select_dropdown])
     refresh_styles_button.click(fn=refresh_styles_click, outputs=[prompt_style_dropdown])
@@ -1709,7 +1716,8 @@ with (block):
     output_label.change(fn=update_elements, show_progress=False, queue=True, inputs=[output_label],
                         outputs=output_elements)
 
-    output_files.change(fn=show_output, inputs=[output_files], outputs=[output_image, output_video])
+    meta_file_browser.change(fn=update_meta, inputs=[meta_file_browser], outputs=[meta_image, meta_video])
+    meta_image.change(fn=read_image_metadata, inputs=[meta_image], outputs=[metadata_output])
 
     prompt_style_dropdown.change(fn=select_style, inputs=[prompt_style_dropdown, qs_textbox],
                                  outputs=[a_prompt_textbox, n_prompt_textbox, qs_textbox])

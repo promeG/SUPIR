@@ -10,10 +10,15 @@
     overflow: hidden;
 }
 
+#metadata_image_input {
+    height: 41.5vh;
+}
+
 #output_metadata {
     height: 41.5vh;
     overflow-y: scroll !important;
 }
+
 
 .output_view_col {
     height: 100%;
