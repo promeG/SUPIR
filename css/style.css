@@ -221,4 +221,35 @@
     background: var(--button-secondary-background);
 }
 
+.info-btn {
+    position: absolute;
+    top: 4px;
+    right: 10px;
+    width: 25px;
+    height: 25px;
+    border-radius: 50%;
+}
+
+.info-btn::before {
+    content: "\24D8";
+}
+
+
+.info-title-div {
+    width: 500px;
+    height: 100px;
+    background: rgba(0, 0, 0, 0.91);
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    display: none;
+    padding: 5px;
+    border: 1px solid;
+    border-radius: 11px;
+}
+
+.info-div.open {
+    display: flex;
+}
+
 

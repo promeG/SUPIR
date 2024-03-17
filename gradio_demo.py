@@ -7,7 +7,7 @@ import threading
 import time
 import traceback
 from datetime import datetime
-from typing import Tuple, List, Any
+from typing import Tuple, List, Any, Dict
 import gc
 import einops
 import gradio as gr
@@ -30,7 +30,7 @@ from SUPIR.utils.status_container import StatusContainer, MediaData
 from llava.llava_agent import LLavaAgent
 from ui_helpers import is_video, extract_video, compile_video, is_image, get_video_params, printt
 
-SUPIR_REVISION = "v41"
+SUPIR_REVISION = "v42"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1', help="IP address for the server to listen on.")
@@ -184,6 +184,20 @@ def open_folder():
         os.startfile(open_folder_path)
     elif platform.system() == "Linux":
         os.system(f'xdg-open "{open_folder_path}"')
+
+
+def set_info_attributes(elements_to_set: Dict[str, Any]):
+    output = {}
+    for key, value in elements_to_set.items():
+        if not getattr(value, 'elem_id', None):
+            setattr(value, 'elem_id', key)
+        classes = getattr(value, 'elem_classes', None)
+        if isinstance(classes, list):
+            if "info-btn" not in classes:
+                classes.append("info-button")
+                setattr(value, 'elem_classes', classes)
+        output[key] = value
+    return output
 
 
 def list_models():
@@ -1667,6 +1681,16 @@ with (block):
         "video_start": video_start_time_number,
         "video_width": video_width_textbox,
     }
+
+    extra_info_elements = {
+        "prompt_style": prompt_style_dropdown,
+        "checkpoint_type": ckpt_type,
+    }
+
+    elements_dict = set_info_attributes(elements_dict)
+
+    # Add items here that are not passed to processing for labels
+    extra_info_elements = set_info_attributes(extra_info_elements)
 
     elements = list(elements_dict.values())
 
