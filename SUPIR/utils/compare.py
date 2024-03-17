@@ -1,11 +1,14 @@
 import subprocess
 
 
-def create_comparison_video(image_a, image_b, output_video, duration=5, frame_rate=30, video_width=1920,
-                            video_height=1080, params=None):
-    if params:
-        duration = params.get('duration', duration)
-        frame_rate = params.get('frame_rate', frame_rate)
+def create_comparison_video(image_a, image_b, output_video, params=None):
+    duration=5
+    frame_rate=30
+    video_width=1920
+    video_height=1080
+    if params:       
+        duration = params.get('video_duration', duration)
+        frame_rate = params.get('video_fps', frame_rate)
         video_width = params.get('video_width', video_width)
         video_height = params.get('video_height', video_height)
     ffmpeg_cmd = [
