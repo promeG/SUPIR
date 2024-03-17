@@ -319,11 +319,9 @@ function addInfoButtons() {
                 showInfoButton = false;
             }
             if (showInfoButton) {
-                let parent = button.parentElement;
                 let div = document.createElement('div');
                 div.classList.add('info-btn');
                 div.innerHTML = '<i></i>';
-                div.title = title;
                 if (hasRefresh) {
                     div.style.right = '40px';
                     div.style.top = '10px';
@@ -332,10 +330,9 @@ function addInfoButtons() {
                 let infoDiv = document.createElement('div');
                 infoDiv.classList.add('info-title-div');
                 infoDiv.style.display = 'none';
-                infoDiv.innerHTML = title;
+                infoDiv.innerHTML = config.title;
                 button.appendChild(infoDiv);
                 div.addEventListener('click', (event) => {
-                    let title = event.target.title;
                     if (div.classList.contains('open')) {
                         div.classList.remove('open');
                         let infoDiv = div.nextElementSibling;
