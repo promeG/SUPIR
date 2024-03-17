@@ -1488,11 +1488,10 @@ with (block):
                         auto_unload_llava_checkbox = gr.Checkbox(label="Auto Unload LLaVA (Low VRAM)",
                                                                  value=auto_unload)
                         setattr(auto_unload_llava_checkbox, "do_not_save_to_config", True)
-
+                    qs_textbox = gr.Textbox(label="LLaVA prompt",value=llava_style_prompt)
                     temperature_slider = gr.Slider(label="Temperature", minimum=0., maximum=1.0, value=0.2, step=0.1)
                     top_p_slider = gr.Slider(label="Top P", minimum=0., maximum=1.0, value=0.7, step=0.1)
-                    qs_textbox = gr.Textbox(label="Question",
-                                            value=llava_style_prompt)
+
                 with gr.Accordion("SUPIR options", open=False):
                     with gr.Row():
                         with gr.Column():
