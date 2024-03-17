@@ -1003,7 +1003,7 @@ def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
     main_end_time = time.time()
     global unique_counter
     unique_counter = unique_counter + 1
-    return f"Image Upscaling Completed: processed {processed_images} images at in {main_end_time - main_begin_time:.2f} seconds #{unique_counter}"
+    return f"Image Upscaling Completed: processed {total_images} images at in {main_end_time - main_begin_time:.2f} seconds #{unique_counter}"
 
 
 def batch_process(img_data,
