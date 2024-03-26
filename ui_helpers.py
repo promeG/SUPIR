@@ -2,7 +2,7 @@ import json
 import os
 import re
 import subprocess
-from typing import List, Dict, Union
+from typing import List, Dict
 
 import cv2
 import filetype
@@ -206,10 +206,6 @@ def printt(msg, progress=gr.Progress(), reset: bool = False):
         return graph
 
 
-import os
-import subprocess
-
-
 def restore_audio(src_video, target_video, video_fps, frame_start, frame_end) -> bool:
     output_video_path = os.path.splitext(target_video)[0] + "_audio_restored.mp4"
     commands = ['ffmpeg', '-hwaccel', 'auto']
@@ -244,4 +240,3 @@ def restore_audio(src_video, target_video, video_fps, frame_start, frame_end) ->
         if os.path.exists(output_video_path):
             os.remove(output_video_path)
         return False
-

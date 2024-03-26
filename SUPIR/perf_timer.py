@@ -22,10 +22,12 @@ class PerfTimer:
         self.vram_records = []
         self.time_points = []
 
-    def get_ram_usage(self):
+    @staticmethod
+    def get_ram_usage():
         return psutil.Process().memory_info().rss / (1024 ** 3)  # GB
 
-    def get_vram_usage(self):
+    @staticmethod
+    def get_vram_usage():
         if vram_supported:  # Ensure vram_supported is defined and correctly determines if VRAM usage can be checked
             torch.cuda.synchronize()  # Wait for all kernels in all streams on a CUDA device to complete
             info = torch.cuda.memory_stats()  # Get detailed CUDA memory stats

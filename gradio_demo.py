@@ -1,5 +1,6 @@
 import argparse
 import datetime
+import gc
 import os
 import shutil
 import tempfile
@@ -8,7 +9,7 @@ import time
 import traceback
 from datetime import datetime
 from typing import Tuple, List, Any, Dict
-import gc
+
 import einops
 import gradio as gr
 import numpy as np
@@ -17,21 +18,21 @@ import torch
 from PIL import Image
 from PIL import PngImagePlugin
 from gradio_imageslider import ImageSlider
-from SUPIR.utils.rename_meta import rename_meta_key
 
 import ui_helpers
 from SUPIR.models.SUPIR_model import SUPIRModel
 from SUPIR.util import HWC3, upscale_image, convert_dtype
 from SUPIR.util import create_SUPIR_model
+from SUPIR.utils import shared
 from SUPIR.utils.compare import create_comparison_video
 from SUPIR.utils.face_restoration_helper import FaceRestoreHelper
 from SUPIR.utils.model_fetch import get_model
+from SUPIR.utils.rename_meta import rename_meta_key
 from SUPIR.utils.status_container import StatusContainer, MediaData
 from llava.llava_agent import LLavaAgent
-from SUPIR.utils import shared, devices
 from ui_helpers import is_video, extract_video, compile_video, is_image, get_video_params, printt
 
-SUPIR_REVISION = "v42"
+SUPIR_REVISION = "v43"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1', help="IP address for the server to listen on.")
@@ -42,6 +43,7 @@ parser.add_argument("--loading_half_params", action='store_true', default=False,
                     help="Enable loading model parameters in half precision to reduce memory usage.")
 parser.add_argument("--fp8", action='store_true', default=False, 
                     help="Enable loading model parameters in FP8 precision to reduce memory usage.")
+parser.add_argument("--autotune", action='store_true', default=False, help="Automatically set precision parameters based on the amount of VRAM available.")
 parser.add_argument("--use_tile_vae", action='store_true', default=True,
                     help="Enable tiling for the VAE to handle larger images with limited memory.")
 parser.add_argument("--outputs_folder_button", type=str, default=False, help="Outputs Folder Button Will Be Enabled")
@@ -82,11 +84,12 @@ meta_upload = False
 
 total_vram = 100000
 auto_unload = False
-if torch.cuda.is_available():
+if torch.cuda.is_available() and args.autotune:
     # Get total GPU memory
     total_vram = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
     print("Total VRAM: ", total_vram, "GB")
     # If total VRAM <= 12GB, set auto_unload to True
+    args.fp8 = total_vram <= 8
     auto_unload = total_vram <= 12
 
     if total_vram <= 24:
@@ -657,8 +660,6 @@ def populate_slider_single():
 
 
 def populate_gallery():
-    # Fetch the image at http://www.marketingtool.online/en/face-generator/img/faces/avatar-1151ce9f4b2043de0d2e3b7826127998.jpg
-    # and use it as the input image
     temp_path = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
     temp_path.write(requests.get(
         "http://www.marketingtool.online/en/face-generator/img/faces/avatar-1151ce9f4b2043de0d2e3b7826127998.jpg").content)

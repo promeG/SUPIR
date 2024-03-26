@@ -4,10 +4,11 @@
 
 from typing import Dict, Union
 
+import gradio as gr
 import torch
+from k_diffusion.sampling import get_sigmas_karras, BrownianTreeNoiseSampler
 from omegaconf import ListConfig, OmegaConf
 from tqdm import tqdm
-import gradio as gr
 
 from ui_helpers import printt
 from ...modules.diffusionmodules.sampling_utils import (
@@ -18,7 +19,6 @@ from ...modules.diffusionmodules.sampling_utils import (
     to_sigma,
 )
 from ...util import append_dims, default, instantiate_from_config
-from k_diffusion.sampling import get_sigmas_karras, BrownianTreeNoiseSampler
 
 DEFAULT_GUIDER = {"target": "sgm.modules.diffusionmodules.guiders.IdentityGuider"}
 
