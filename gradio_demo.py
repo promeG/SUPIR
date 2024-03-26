@@ -28,6 +28,7 @@ from SUPIR.utils.face_restoration_helper import FaceRestoreHelper
 from SUPIR.utils.model_fetch import get_model
 from SUPIR.utils.status_container import StatusContainer, MediaData
 from llava.llava_agent import LLavaAgent
+from SUPIR.utils import shared, devices
 from ui_helpers import is_video, extract_video, compile_video, is_image, get_video_params, printt
 
 SUPIR_REVISION = "v42"
@@ -39,6 +40,8 @@ parser.add_argument("--port", type=int, help="Port number for the server to list
 parser.add_argument("--log_history", action='store_true', default=False, help="Enable logging of request history.")
 parser.add_argument("--loading_half_params", action='store_true', default=False,
                     help="Enable loading model parameters in half precision to reduce memory usage.")
+parser.add_argument("--fp8", action='store_true', default=False, 
+                    help="Enable loading model parameters in FP8 precision to reduce memory usage.")
 parser.add_argument("--use_tile_vae", action='store_true', default=True,
                     help="Enable tiling for the VAE to handle larger images with limited memory.")
 parser.add_argument("--outputs_folder_button", type=str, default=False, help="Outputs Folder Button Will Be Enabled")
@@ -90,6 +93,12 @@ if torch.cuda.is_available():
         args.loading_half_params = True
         args.use_tile_vae = True
         print("Loading half params")
+
+shared.opts.half_mode = args.loading_half_params  
+
+if args.fp8:
+    shared.opts.half_mode = args.fp8
+    shared.opts.fp8_storage = args.fp8
 
 server_ip = args.ip
 if args.debug:
@@ -324,8 +333,7 @@ def load_model(selected_model, selected_checkpoint, sampler='DPMPP2M', device='c
         model = create_SUPIR_model(model_cfg, supir_sign=selected_model[-1], device=device, ckpt=checkpoint_use,
                                    sampler=sampler)
         model.current_model = selected_model
-        if args.loading_half_params:
-            model = model.half()
+     
         if args.use_tile_vae:
             model.init_tile_vae(encoder_tile_size=512, decoder_tile_size=64, use_fast=args.use_fast_tile)
         if progress is not None:
