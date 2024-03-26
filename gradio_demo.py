@@ -87,7 +87,7 @@ auto_unload = False
 if torch.cuda.is_available() and args.autotune:
     # Get total GPU memory
     total_vram = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
-    print("Total VRAM: ", total_vram, "GB")
+    print("Autotune enabled, Total VRAM: ", total_vram, "GB")
     # If total VRAM <= 12GB, set auto_unload to True
     args.fp8 = total_vram <= 8
     auto_unload = total_vram <= 12
@@ -95,7 +95,10 @@ if torch.cuda.is_available() and args.autotune:
     if total_vram <= 24:
         args.loading_half_params = True
         args.use_tile_vae = True
-        print("Loading half params")
+    print("Auto Unload: ", auto_unload)
+    print("Half Params: ", args.loading_half_params)
+    print("FP8: ", args.fp8)
+    print("Tile VAE: ", args.use_tile_vae)
 
 shared.opts.half_mode = args.loading_half_params  
 
@@ -580,7 +583,6 @@ def read_image_metadata(image_path):
 
 
 def update_elements(status_label):
-    print(f"Label changed: {status_label}")
     prompt_el = gr.update()
     result_gallery_el = gr.update(height=400)
     result_slider_el = gr.update(height=400)
@@ -594,13 +596,11 @@ def update_elements(status_label):
         if len(output_data) == 1:
             image_data = output_data[0]
             caption = image_data.caption
-            print(f"Caption: {caption}")
             prompt_el = gr.update(value=caption)
             if len(image_data.outputs) > 0:
                 outputs = image_data.outputs
                 params = image_data.metadata_list
                 if len(params) != len(outputs):
-                    print("Mismatch in outputs and metadata list, using defaults.")
                     params = [status_container.process_params] * len(outputs)
                 first_output = outputs[0]
                 first_params = params[0]
