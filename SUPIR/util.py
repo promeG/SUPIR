@@ -1,15 +1,16 @@
 import os
-
-import psutil
 import torch
 import numpy as np
 import cv2
 from PIL import Image
 from torch.nn.functional import interpolate
+
+from SUPIR.utils.devices import torch_gc
+from .utils import models_utils
 from omegaconf import OmegaConf
 from sgm.util import instantiate_from_config
 from ui_helpers import printt
-
+from SUPIR.utils import models_utils
 
 def get_state_dict(d):
     return d.get('state_dict', d)
@@ -35,7 +36,7 @@ def create_SUPIR_model(config_path, supir_sign=None, device='cpu', ckpt=None, sa
         config.SDXL_CKPT = ckpt
 
     # Instantiate model from config
-    printt(f'Loading model from [{config_path}]')
+    printt(f'Loading model from [{config_path}]')    
     model = instantiate_from_config(config.model)
     printt(f'Loaded model from [{config_path}]')
 
@@ -48,7 +49,8 @@ def create_SUPIR_model(config_path, supir_sign=None, device='cpu', ckpt=None, sa
             else:
                 tgt_device = 'cpu'
             state_dict = load_state_dict(ckpt_path, tgt_device)
-            model.load_state_dict(state_dict, strict=False)
+            models_utils.load_model_weights(model, state_dict)  
+            torch_gc()            
             printt(f'Loaded state_dict from [{ckpt_path}]')
         else:
             printt(f'No checkpoint found at [{ckpt_path}]')
@@ -179,6 +181,8 @@ def Tensor2Numpy(x, h0=None, w0=None):
 
 
 def convert_dtype(dtype_str):
+    if dtype_str == 'fp8':
+        return torch.float8_e5m2
     if dtype_str == 'fp32':
         return torch.float32
     elif dtype_str == 'fp16':
