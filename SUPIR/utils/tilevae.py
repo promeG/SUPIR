@@ -712,6 +712,7 @@ class VAEHook:
             else:
                 return self.vae_tile_forward(x)
         finally:
+            devices.torch_gc()
             pass
 
     def get_best_tile_size(self, lowerbound, upperbound):
