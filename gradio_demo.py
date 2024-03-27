@@ -88,13 +88,15 @@ if torch.cuda.is_available() and args.autotune:
     # Get total GPU memory
     total_vram = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
     print("Autotune enabled, Total VRAM: ", total_vram, "GB")
-    # If total VRAM <= 12GB, set auto_unload to True
-    args.fp8 = total_vram <= 8
+    if not args.fp8:
+        args.fp8 = total_vram <= 8
     auto_unload = total_vram <= 12
 
     if total_vram <= 24:
-        args.loading_half_params = True
-        args.use_tile_vae = True
+        if not args.loading_half_params:
+            args.loading_half_params = True
+        if not args.use_tile_vae:
+            args.use_tile_vae = True
     print("Auto Unload: ", auto_unload)
     print("Half Params: ", args.loading_half_params)
     print("FP8: ", args.fp8)
