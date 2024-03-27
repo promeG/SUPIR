@@ -44,7 +44,7 @@ parser.add_argument("--loading_half_params", action='store_true', default=False,
 parser.add_argument("--fp8", action='store_true', default=False, 
                     help="Enable loading model parameters in FP8 precision to reduce memory usage.")
 parser.add_argument("--autotune", action='store_true', default=False, help="Automatically set precision parameters based on the amount of VRAM available.")
-parser.add_argument("--use_tile_vae", action='store_true', default=True,
+parser.add_argument("--use_tile_vae", action='store_true', default=False,
                     help="Enable tiling for the VAE to handle larger images with limited memory.")
 parser.add_argument("--outputs_folder_button", type=str, default=False, help="Outputs Folder Button Will Be Enabled")
 parser.add_argument("--use_fast_tile", action='store_true', default=False,
@@ -379,7 +379,7 @@ def clear_llava():
 def all_to_cpu_background():
     if args.dont_move_cpu:
         return
-    global face_helper, model, llava_agent
+    global face_helper, model, llava_agent, auto_unload
     printt("Moving all to CPU")
     if face_helper is not None:
         face_helper = face_helper.to('cpu')
@@ -389,7 +389,8 @@ def all_to_cpu_background():
         model.move_to('cpu')
         printt("Model moved to CPU")
     if llava_agent is not None:
-        unload_llava()
+        if auto_unload:
+            unload_llava()
     gc.collect()
     torch.cuda.empty_cache()
     printt("All moved to CPU")
