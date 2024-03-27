@@ -79,7 +79,7 @@ video_end = 0
 last_input_path = None
 last_video_params = None
 meta_upload = False
-
+bf16_supported = torch.cuda.is_bf16_supported()
 total_vram = 100000
 auto_unload = False
 if torch.cuda.is_available():
@@ -305,7 +305,7 @@ def load_face_helper():
         )
 
 
-def load_model(selected_model, selected_checkpoint, sampler='DPMPP2M', device='cpu', progress=gr.Progress()):
+def load_model(selected_model, selected_checkpoint, weight_dtype, sampler='DPMPP2M', device='cpu', progress=gr.Progress()):
     global model, last_used_checkpoint
 
     # Determine the need for model loading or updating
@@ -330,7 +330,8 @@ def load_model(selected_model, selected_checkpoint, sampler='DPMPP2M', device='c
         torch.cuda.empty_cache()
         last_used_checkpoint = checkpoint_use
         model_cfg = "options/SUPIR_v0_tiled.yaml" if args.use_tile_vae else "options/SUPIR_v0.yaml"
-        model = create_SUPIR_model(model_cfg, supir_sign=selected_model[-1], device=device, ckpt=checkpoint_use,
+        weight_dtype = 'fp16' if bf16_supported == False else weight_dtype
+        model = create_SUPIR_model(model_cfg, weight_dtype, supir_sign=selected_model[-1], device=device, ckpt=checkpoint_use,
                                    sampler=sampler)
         model.current_model = selected_model
      
@@ -854,13 +855,13 @@ def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
         total_progress += 1
     counter = 0
     progress(counter / total_progress, desc="Loading SUPIR Model...")
-    load_model(model_select, ckpt_select, sampler, progress=progress)
+    load_model(model_select, ckpt_select, diff_dtype, sampler, progress=progress)
     to_gpu(model, SUPIR_device)
 
     counter += 1
     progress(counter / total_progress, desc="Model Loaded, Processing Images...")
-    model.ae_dtype = convert_dtype(ae_dtype)
-    model.model.dtype = convert_dtype(diff_dtype)
+    model.ae_dtype = convert_dtype('fp32' if bf16_supported == False else ae_dtype)
+    model.model.dtype = convert_dtype('fp16' if bf16_supported == False else diff_dtype)
 
     idx = 0
     output_data = []

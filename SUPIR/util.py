@@ -10,7 +10,7 @@ from .utils import models_utils
 from omegaconf import OmegaConf
 from sgm.util import instantiate_from_config
 from ui_helpers import printt
-from SUPIR.utils import models_utils
+from SUPIR.utils import models_utils, sd_model_initialization
 
 def get_state_dict(d):
     return d.get('state_dict', d)
@@ -28,13 +28,18 @@ def load_state_dict(ckpt_path, location='cpu'):
     return state_dict
 
 
-def create_SUPIR_model(config_path, supir_sign=None, device='cpu', ckpt=None, sampler="DPMPP2M"):
+def create_SUPIR_model(config_path, weight_dtype='bf16', supir_sign=None, device='cpu', ckpt=None, sampler="DPMPP2M"):
     # Load the model configuration
     config = OmegaConf.load(config_path)
     config.model.params.sampler_config.target = sampler
     if ckpt:
         config.SDXL_CKPT = ckpt
 
+    weight_dtype_conversion = {
+        'first_stage_model': None,
+        'alphas_cumprod': None,
+        '': convert_dtype(weight_dtype),
+    }   
     # Instantiate model from config
     printt(f'Loading model from [{config_path}]')    
     model = instantiate_from_config(config.model)
@@ -49,7 +54,8 @@ def create_SUPIR_model(config_path, supir_sign=None, device='cpu', ckpt=None, sa
             else:
                 tgt_device = 'cpu'
             state_dict = load_state_dict(ckpt_path, tgt_device)
-            models_utils.load_model_weights(model, state_dict)  
+            with sd_model_initialization.LoadStateDictOnMeta(state_dict, device=model.device, weight_dtype_conversion=weight_dtype_conversion):
+                models_utils.load_model_weights(model, state_dict)  
             torch_gc()            
             printt(f'Loaded state_dict from [{ckpt_path}]')
         else:
