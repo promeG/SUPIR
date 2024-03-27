@@ -945,7 +945,7 @@ def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
                                                 num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
                                                 color_fix_type=color_fix_type,
                                                 use_linear_cfg=linear_cfg, use_linear_control_scale=linear_s_stage2,
-                                                cfg_scale_start=spt_linear_cfg, control_scale_start=spt_linear_s_stage2)
+                                                cfg_scale_start=spt_linear_cfg, control_scale_start=spt_linear_s_stage2, sampler_cls=sampler)
 
                 if is_face and face_resolution < 1024:
                     samples = samples[:, :, 512 - face_resolution // 2:512 + face_resolution // 2,
