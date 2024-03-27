@@ -44,7 +44,9 @@ parser.add_argument("--loading_half_params", action='store_true', default=False,
 parser.add_argument("--fp8", action='store_true', default=False, 
                     help="Enable loading model parameters in FP8 precision to reduce memory usage.")
 parser.add_argument("--autotune", action='store_true', default=False, help="Automatically set precision parameters based on the amount of VRAM available.")
-parser.add_argument("--use_tile_vae", action='store_true', default=False,
+parser.add_argument("--fast_load_sd", action='store_true', default=False, 
+                    help="Enable fast loading of model state dict and to prevents unnecessary memory allocation.")
+parser.add_argument("--use_tile_vae", action='store_true', default=True,
                     help="Enable tiling for the VAE to handle larger images with limited memory.")
 parser.add_argument("--outputs_folder_button", type=str, default=False, help="Outputs Folder Button Will Be Enabled")
 parser.add_argument("--use_fast_tile", action='store_true', default=False,
@@ -81,7 +83,7 @@ video_end = 0
 last_input_path = None
 last_video_params = None
 meta_upload = False
-
+bf16_supported = torch.cuda.is_bf16_supported()
 total_vram = 100000
 auto_unload = False
 if torch.cuda.is_available() and args.autotune:
@@ -103,6 +105,7 @@ if torch.cuda.is_available() and args.autotune:
     print("Tile VAE: ", args.use_tile_vae)
 
 shared.opts.half_mode = args.loading_half_params  
+shared.opts.fast_load_sd = args.fast_load_sd
 
 if args.fp8:
     shared.opts.half_mode = args.fp8
@@ -313,7 +316,7 @@ def load_face_helper():
         )
 
 
-def load_model(selected_model, selected_checkpoint, sampler='DPMPP2M', device='cpu', progress=gr.Progress()):
+def load_model(selected_model, selected_checkpoint, weight_dtype, sampler='DPMPP2M', device='cpu', progress=gr.Progress()):
     global model, last_used_checkpoint
 
     # Determine the need for model loading or updating
@@ -338,7 +341,8 @@ def load_model(selected_model, selected_checkpoint, sampler='DPMPP2M', device='c
         torch.cuda.empty_cache()
         last_used_checkpoint = checkpoint_use
         model_cfg = "options/SUPIR_v0_tiled.yaml" if args.use_tile_vae else "options/SUPIR_v0.yaml"
-        model = create_SUPIR_model(model_cfg, supir_sign=selected_model[-1], device=device, ckpt=checkpoint_use,
+        weight_dtype = 'fp16' if bf16_supported == False else weight_dtype
+        model = create_SUPIR_model(model_cfg, weight_dtype, supir_sign=selected_model[-1], device=device, ckpt=checkpoint_use,
                                    sampler=sampler)
         model.current_model = selected_model
      
@@ -858,13 +862,13 @@ def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
         total_progress += 1
     counter = 0
     progress(counter / total_progress, desc="Loading SUPIR Model...")
-    load_model(model_select, ckpt_select, sampler, progress=progress)
+    load_model(model_select, ckpt_select, diff_dtype, sampler, progress=progress)
     to_gpu(model, SUPIR_device)
 
     counter += 1
     progress(counter / total_progress, desc="Model Loaded, Processing Images...")
-    model.ae_dtype = convert_dtype(ae_dtype)
-    model.model.dtype = convert_dtype(diff_dtype)
+    model.ae_dtype = convert_dtype('fp32' if bf16_supported == False else ae_dtype)
+    model.model.dtype = convert_dtype('fp16' if bf16_supported == False else diff_dtype)
 
     idx = 0
     output_data = []
@@ -945,7 +949,7 @@ def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
                                                 num_samples=num_samples, p_p=a_prompt, n_p=n_prompt,
                                                 color_fix_type=color_fix_type,
                                                 use_linear_cfg=linear_cfg, use_linear_control_scale=linear_s_stage2,
-                                                cfg_scale_start=spt_linear_cfg, control_scale_start=spt_linear_s_stage2)
+                                                cfg_scale_start=spt_linear_cfg, control_scale_start=spt_linear_s_stage2, sampler_cls=sampler)
 
                 if is_face and face_resolution < 1024:
                     samples = samples[:, :, 512 - face_resolution // 2:512 + face_resolution // 2,

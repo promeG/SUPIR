@@ -11,7 +11,7 @@ from SUPIR.utils import models_utils
 from SUPIR.utils.devices import torch_gc
 from sgm.util import instantiate_from_config
 from ui_helpers import printt
-
+from SUPIR.utils import models_utils, sd_model_initialization, shared
 
 def get_state_dict(d):
     return d.get('state_dict', d)
@@ -24,21 +24,31 @@ def load_state_dict(ckpt_path, location='cpu'):
         state_dict = safetensors.torch.load_file(ckpt_path, device=location)
     else:
         state_dict = get_state_dict(torch.load(ckpt_path, map_location=torch.device(location)))
-    state_dict = get_state_dict(state_dict)
-    print(f'Loaded state_dict from [{ckpt_path}]')
+    state_dict = get_state_dict(state_dict)    
     return state_dict
 
 
-def create_SUPIR_model(config_path, supir_sign=None, device='cpu', ckpt=None, sampler="DPMPP2M"):
+def create_SUPIR_model(config_path, weight_dtype='bf16', supir_sign=None, device='cpu', ckpt=None, sampler="DPMPP2M"):
     # Load the model configuration
     config = OmegaConf.load(config_path)
     config.model.params.sampler_config.target = sampler
     if ckpt:
         config.SDXL_CKPT = ckpt
 
+    weight_dtype_conversion = {
+        'first_stage_model': None,
+        'alphas_cumprod': None,
+        '': convert_dtype(weight_dtype),
+    }   
     # Instantiate model from config
-    printt(f'Loading model from [{config_path}]')    
-    model = instantiate_from_config(config.model)
+    printt(f'Loading model from [{config_path}]')
+    if shared.opts.fast_load_sd:
+        with sd_model_initialization.DisableInitialization(disable_clip=False):
+            with sd_model_initialization.InitializeOnMeta():    
+                model = instantiate_from_config(config.model)
+    else:
+        model = instantiate_from_config(config.model)
+
     printt(f'Loaded model from [{config_path}]')
 
     # Function to load state dict to the chosen device
@@ -50,7 +60,8 @@ def create_SUPIR_model(config_path, supir_sign=None, device='cpu', ckpt=None, sa
             else:
                 tgt_device = 'cpu'
             state_dict = load_state_dict(checkpoint_path, tgt_device)
-            models_utils.load_model_weights(model, state_dict)  
+            with sd_model_initialization.LoadStateDictOnMeta(state_dict, device=model.device, weight_dtype_conversion=weight_dtype_conversion):
+                models_utils.load_model_weights(model, state_dict)  
             torch_gc()            
             printt(f'Loaded state_dict from [{checkpoint_path}]')
         else:
