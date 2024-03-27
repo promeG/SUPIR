@@ -10,7 +10,7 @@ from .utils import models_utils
 from omegaconf import OmegaConf
 from sgm.util import instantiate_from_config
 from ui_helpers import printt
-from SUPIR.utils import models_utils, sd_model_initialization
+from SUPIR.utils import models_utils, sd_model_initialization, shared
 
 def get_state_dict(d):
     return d.get('state_dict', d)
@@ -41,8 +41,14 @@ def create_SUPIR_model(config_path, weight_dtype='bf16', supir_sign=None, device
         '': convert_dtype(weight_dtype),
     }   
     # Instantiate model from config
-    printt(f'Loading model from [{config_path}]')    
-    model = instantiate_from_config(config.model)
+    printt(f'Loading model from [{config_path}]')
+    if shared.opts.fast_load_sd:
+        with sd_model_initialization.DisableInitialization(disable_clip=False):
+            with sd_model_initialization.InitializeOnMeta():    
+                model = instantiate_from_config(config.model)
+    else:
+        model = instantiate_from_config(config.model)
+
     printt(f'Loaded model from [{config_path}]')
 
     # Function to load state dict to the chosen device

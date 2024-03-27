@@ -42,6 +42,8 @@ parser.add_argument("--loading_half_params", action='store_true', default=False,
                     help="Enable loading model parameters in half precision to reduce memory usage.")
 parser.add_argument("--fp8", action='store_true', default=False, 
                     help="Enable loading model parameters in FP8 precision to reduce memory usage.")
+parser.add_argument("--fast_load_sd", action='store_true', default=False, 
+                    help="Enable fast loading of model state dict and to prevents unnecessary memory allocation.")
 parser.add_argument("--use_tile_vae", action='store_true', default=True,
                     help="Enable tiling for the VAE to handle larger images with limited memory.")
 parser.add_argument("--outputs_folder_button", type=str, default=False, help="Outputs Folder Button Will Be Enabled")
@@ -95,6 +97,7 @@ if torch.cuda.is_available():
         print("Loading half params")
 
 shared.opts.half_mode = args.loading_half_params  
+shared.opts.fast_load_sd = args.fast_load_sd
 
 if args.fp8:
     shared.opts.half_mode = args.fp8
