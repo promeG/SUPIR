@@ -18,6 +18,7 @@ from transformers import (
     T5Tokenizer,
 )
 
+from CKPT_PTH import SDXL_CLIP1_PATH, SDXL_CLIP2_CKPT_PTH
 from SUPIR.utils.model_fetch import get_model
 from ...modules.autoencoding.regularizers import DiagonalGaussianRegularizer
 from ...modules.diffusionmodules.model import Encoder
@@ -26,14 +27,12 @@ from ...modules.diffusionmodules.util import extract_into_tensor, make_beta_sche
 from ...modules.distributions.distributions import DiagonalGaussianDistribution
 from ...util import (
     autocast,
-    count_params,
     default,
     disabled_train,
     expand_dims_like,
     instantiate_from_config,
 )
 
-from CKPT_PTH import SDXL_CLIP1_PATH, SDXL_CLIP2_CKPT_PTH
 
 class AbstractEmbModel(nn.Module):
     def __init__(self):
@@ -125,7 +124,7 @@ class GeneralConditioner(nn.Module):
         return batch
 
     def forward(
-        self, batch: Dict, force_zero_embeddings: Optional[List] = None
+            self, batch: Dict, force_zero_embeddings: Optional[List] = None
     ) -> Dict:
         output = dict()
         if force_zero_embeddings is None:
@@ -148,18 +147,18 @@ class GeneralConditioner(nn.Module):
                 out_key = self.OUTPUT_DIM2KEYS[emb.dim()]
                 if embedder.ucg_rate > 0.0 and embedder.legacy_ucg_val is None:
                     emb = (
-                        expand_dims_like(
-                            torch.bernoulli(
-                                (1.0 - embedder.ucg_rate)
-                                * torch.ones(emb.shape[0], device=emb.device)
-                            ),
-                            emb,
-                        )
-                        * emb
+                            expand_dims_like(
+                                torch.bernoulli(
+                                    (1.0 - embedder.ucg_rate)
+                                    * torch.ones(emb.shape[0], device=emb.device)
+                                ),
+                                emb,
+                            )
+                            * emb
                     )
                 if (
-                    hasattr(embedder, "input_key")
-                    and embedder.input_key in force_zero_embeddings
+                        hasattr(embedder, "input_key")
+                        and embedder.input_key in force_zero_embeddings
                 ):
                     emb = torch.zeros_like(emb)
                 if out_key in output:
@@ -171,7 +170,7 @@ class GeneralConditioner(nn.Module):
         return output
 
     def get_unconditional_conditioning(
-        self, batch_c, batch_uc=None, force_uc_zero_embeddings=None
+            self, batch_c, batch_uc=None, force_uc_zero_embeddings=None
     ):
         if force_uc_zero_embeddings is None:
             force_uc_zero_embeddings = []
@@ -189,7 +188,7 @@ class GeneralConditioner(nn.Module):
 
 class GeneralConditionerWithControl(GeneralConditioner):
     def forward(
-        self, batch: Dict, force_zero_embeddings: Optional[List] = None
+            self, batch: Dict, force_zero_embeddings: Optional[List] = None
     ) -> Dict:
         output = dict()
         if force_zero_embeddings is None:
@@ -215,18 +214,18 @@ class GeneralConditionerWithControl(GeneralConditioner):
                     out_key = self.OUTPUT_DIM2KEYS[emb.dim()]
                 if embedder.ucg_rate > 0.0 and embedder.legacy_ucg_val is None:
                     emb = (
-                        expand_dims_like(
-                            torch.bernoulli(
-                                (1.0 - embedder.ucg_rate)
-                                * torch.ones(emb.shape[0], device=emb.device)
-                            ),
-                            emb,
-                        )
-                        * emb
+                            expand_dims_like(
+                                torch.bernoulli(
+                                    (1.0 - embedder.ucg_rate)
+                                    * torch.ones(emb.shape[0], device=emb.device)
+                                ),
+                                emb,
+                            )
+                            * emb
                     )
                 if (
-                    hasattr(embedder, "input_key")
-                    and embedder.input_key in force_zero_embeddings
+                        hasattr(embedder, "input_key")
+                        and embedder.input_key in force_zero_embeddings
                 ):
                     emb = torch.zeros_like(emb)
                 if out_key in output:
@@ -250,8 +249,7 @@ class PreparedConditioner(nn.Module):
         if un_cond_pth is not None:
             un_conditions = torch.load(un_cond_pth)
             for k, v in un_conditions.items():
-                self.register_buffer(k+'_uc', v)
-
+                self.register_buffer(k + '_uc', v)
 
     @torch.no_grad()
     def forward(
@@ -266,7 +264,8 @@ class PreparedConditioner(nn.Module):
                     output[k] = v.detach().clone().repeat(batch['control'].shape[0], *[1 for _ in range(v.ndim - 1)])
             else:
                 if k.endswith("_uc"):
-                    output[k[:-3]] = v.detach().clone().repeat(batch['control'].shape[0], *[1 for _ in range(v.ndim - 1)])
+                    output[k[:-3]] = v.detach().clone().repeat(batch['control'].shape[0],
+                                                               *[1 for _ in range(v.ndim - 1)])
                 else:
                     continue
         output["control"] = batch["control"]
@@ -277,7 +276,7 @@ class PreparedConditioner(nn.Module):
         return output
 
     def get_unconditional_conditioning(
-        self, batch_c, batch_uc=None, force_uc_zero_embeddings=None
+            self, batch_c, batch_uc=None, force_uc_zero_embeddings=None
     ):
         c = self(batch_c)
         if self.un_cond_pth is not None:
@@ -285,7 +284,6 @@ class PreparedConditioner(nn.Module):
         else:
             uc = None
         return c, uc
-
 
 
 class InceptionV3(nn.Module):
@@ -337,7 +335,7 @@ class ClassEmbedder(AbstractEmbModel):
 
     def get_unconditional_conditioning(self, bs, device="cuda"):
         uc_class = (
-            self.n_classes - 1
+                self.n_classes - 1
         )  # 1000 classes --> 0 ... 999, one extra class for ucg (class 1000)
         uc = torch.ones((bs,), device=device) * uc_class
         uc = {self.key: uc.long()}
@@ -360,7 +358,7 @@ class FrozenT5Embedder(AbstractEmbModel):
     """Uses the T5 transformer encoder for text"""
 
     def __init__(
-        self, version="google/t5-v1_1-xxl", device="cuda", max_length=77, freeze=True
+            self, version="google/t5-v1_1-xxl", device="cuda", max_length=77, freeze=True
     ):  # others are google/t5-v1_1-xl and google/t5-v1_1-xxl
         super().__init__()
         self.tokenizer = T5Tokenizer.from_pretrained(version)
@@ -403,7 +401,7 @@ class FrozenByT5Embedder(AbstractEmbModel):
     """
 
     def __init__(
-        self, version="google/byt5-base", device="cuda", max_length=77, freeze=True
+            self, version="google/byt5-base", device="cuda", max_length=77, freeze=True
     ):  # others are google/t5-v1_1-xl and google/t5-v1_1-xxl
         super().__init__()
         self.tokenizer = ByT5Tokenizer.from_pretrained(version)
@@ -445,14 +443,14 @@ class FrozenCLIPEmbedder(AbstractEmbModel):
     LAYERS = ["last", "pooled", "hidden"]
 
     def __init__(
-        self,
-        version="openai/clip-vit-large-patch14",
-        device="cuda",
-        max_length=77,
-        freeze=True,
-        layer="last",
-        layer_idx=None,
-        always_return_pooled=False,
+            self,
+            version="openai/clip-vit-large-patch14",
+            device="cuda",
+            max_length=77,
+            freeze=True,
+            layer="last",
+            layer_idx=None,
+            always_return_pooled=False,
     ):  # clip-vit-base-patch32
         super().__init__()
         assert layer in self.LAYERS
@@ -513,15 +511,15 @@ class FrozenOpenCLIPEmbedder2(AbstractEmbModel):
     LAYERS = ["pooled", "last", "penultimate"]
 
     def __init__(
-        self,
-        arch="ViT-H-14",
-        version="laion2b_s32b_b79k",
-        device="cuda",
-        max_length=77,
-        freeze=True,
-        layer="last",
-        always_return_pooled=False,
-        legacy=True,
+            self,
+            arch="ViT-H-14",
+            version="laion2b_s32b_b79k",
+            device="cuda",
+            max_length=77,
+            freeze=True,
+            layer="last",
+            always_return_pooled=False,
+            legacy=True,
     ):
         super().__init__()
         assert layer in self.LAYERS
@@ -584,8 +582,8 @@ class FrozenOpenCLIPEmbedder2(AbstractEmbModel):
     def pool(self, x, text):
         # take features from the eot embedding (eot_token is the highest number in each sequence)
         x = (
-            x[torch.arange(x.shape[0]), text.argmax(dim=-1)]
-            @ self.model.text_projection
+                x[torch.arange(x.shape[0]), text.argmax(dim=-1)]
+                @ self.model.text_projection
         )
         return x
 
@@ -595,8 +593,8 @@ class FrozenOpenCLIPEmbedder2(AbstractEmbModel):
             if i == len(self.model.transformer.resblocks) - 1:
                 outputs["penultimate"] = x.permute(1, 0, 2)  # LND -> NLD
             if (
-                self.model.transformer.grad_checkpointing
-                and not torch.jit.is_scripting()
+                    self.model.transformer.grad_checkpointing
+                    and not torch.jit.is_scripting()
             ):
                 x = checkpoint(r, x, attn_mask)
             else:
@@ -616,13 +614,13 @@ class FrozenOpenCLIPEmbedder(AbstractEmbModel):
     ]
 
     def __init__(
-        self,
-        arch="ViT-H-14",
-        version="laion2b_s32b_b79k",
-        device="cuda",
-        max_length=77,
-        freeze=True,
-        layer="last",
+            self,
+            arch="ViT-H-14",
+            version="laion2b_s32b_b79k",
+            device="cuda",
+            max_length=77,
+            freeze=True,
+            layer="last",
     ):
         super().__init__()
         assert layer in self.LAYERS
@@ -668,8 +666,8 @@ class FrozenOpenCLIPEmbedder(AbstractEmbModel):
             if i == len(self.model.transformer.resblocks) - self.layer_idx:
                 break
             if (
-                self.model.transformer.grad_checkpointing
-                and not torch.jit.is_scripting()
+                    self.model.transformer.grad_checkpointing
+                    and not torch.jit.is_scripting()
             ):
                 x = checkpoint(r, x, attn_mask)
             else:
@@ -686,18 +684,18 @@ class FrozenOpenCLIPImageEmbedder(AbstractEmbModel):
     """
 
     def __init__(
-        self,
-        arch="ViT-H-14",
-        version="laion2b_s32b_b79k",
-        device="cuda",
-        max_length=77,
-        freeze=True,
-        antialias=True,
-        ucg_rate=0.0,
-        unsqueeze_dim=False,
-        repeat_to_max_len=False,
-        num_image_crops=0,
-        output_tokens=False,
+            self,
+            arch="ViT-H-14",
+            version="laion2b_s32b_b79k",
+            device="cuda",
+            max_length=77,
+            freeze=True,
+            antialias=True,
+            ucg_rate=0.0,
+            unsqueeze_dim=False,
+            repeat_to_max_len=False,
+            num_image_crops=0,
+            output_tokens=False,
     ):
         super().__init__()
         model, _, _ = open_clip.create_model_and_transforms(
@@ -757,21 +755,21 @@ class FrozenOpenCLIPImageEmbedder(AbstractEmbModel):
         z = z.to(image.dtype)
         if self.ucg_rate > 0.0 and not no_dropout and not (self.max_crops > 0):
             z = (
-                torch.bernoulli(
-                    (1.0 - self.ucg_rate) * torch.ones(z.shape[0], device=z.device)
-                )[:, None]
-                * z
+                    torch.bernoulli(
+                        (1.0 - self.ucg_rate) * torch.ones(z.shape[0], device=z.device)
+                    )[:, None]
+                    * z
             )
             if tokens is not None:
                 tokens = (
-                    expand_dims_like(
-                        torch.bernoulli(
-                            (1.0 - self.ucg_rate)
-                            * torch.ones(tokens.shape[0], device=tokens.device)
-                        ),
-                        tokens,
-                    )
-                    * tokens
+                        expand_dims_like(
+                            torch.bernoulli(
+                                (1.0 - self.ucg_rate)
+                                * torch.ones(tokens.shape[0], device=tokens.device)
+                            ),
+                            tokens,
+                        )
+                        * tokens
                 )
         if self.unsqueeze_dim:
             z = z[:, None, :]
@@ -820,11 +818,11 @@ class FrozenOpenCLIPImageEmbedder(AbstractEmbModel):
             x = rearrange(x, "(b n) d -> b n d", n=self.max_crops)
             # drop out between 0 and all along the sequence axis
             x = (
-                torch.bernoulli(
-                    (1.0 - self.ucg_rate)
-                    * torch.ones(x.shape[0], x.shape[1], 1, device=x.device)
-                )
-                * x
+                    torch.bernoulli(
+                        (1.0 - self.ucg_rate)
+                        * torch.ones(x.shape[0], x.shape[1], 1, device=x.device)
+                    )
+                    * x
             )
             if tokens is not None:
                 tokens = rearrange(tokens, "(b n) t d -> b t (n d)", n=self.max_crops)
@@ -839,12 +837,12 @@ class FrozenOpenCLIPImageEmbedder(AbstractEmbModel):
 
 class FrozenCLIPT5Encoder(AbstractEmbModel):
     def __init__(
-        self,
-        clip_version="openai/clip-vit-large-patch14",
-        t5_version="google/t5-v1_1-xl",
-        device="cuda",
-        clip_max_length=77,
-        t5_max_length=77,
+            self,
+            clip_version="openai/clip-vit-large-patch14",
+            t5_version="google/t5-v1_1-xl",
+            device="cuda",
+            clip_max_length=77,
+            t5_max_length=77,
     ):
         super().__init__()
         self.clip_encoder = FrozenCLIPEmbedder(
@@ -863,16 +861,16 @@ class FrozenCLIPT5Encoder(AbstractEmbModel):
 
 class SpatialRescaler(nn.Module):
     def __init__(
-        self,
-        n_stages=1,
-        method="bilinear",
-        multiplier=0.5,
-        in_channels=3,
-        out_channels=None,
-        bias=False,
-        wrap_video=False,
-        kernel_size=1,
-        remap_output=False,
+            self,
+            n_stages=1,
+            method="bilinear",
+            multiplier=0.5,
+            in_channels=3,
+            out_channels=None,
+            bias=False,
+            wrap_video=False,
+            kernel_size=1,
+            remap_output=False,
     ):
         super().__init__()
         self.n_stages = n_stages
@@ -900,15 +898,16 @@ class SpatialRescaler(nn.Module):
 
     def forward(self, x):
         if self.wrap_video and x.ndim == 5:
-            B, C, T, H, W = x.shape
+            b, c, t, h, w = x.shape
             x = rearrange(x, "b c t h w -> b t c h w")
             x = rearrange(x, "b t c h w -> (b t) c h w")
-
+        else:
+            b, c, t = x.shape[:3]
         for stage in range(self.n_stages):
             x = self.interpolator(x, scale_factor=self.multiplier)
 
         if self.wrap_video:
-            x = rearrange(x, "(b t) c h w -> b t c h w", b=B, t=T, c=C)
+            x = rearrange(x, "(b t) c h w -> b t c h w", b=b, t=t, c=c)
             x = rearrange(x, "b t c h w -> b c t h w")
         if self.remap_output:
             x = self.channel_mapper(x)
@@ -920,14 +919,14 @@ class SpatialRescaler(nn.Module):
 
 class LowScaleEncoder(nn.Module):
     def __init__(
-        self,
-        model_config,
-        linear_start,
-        linear_end,
-        timesteps=1000,
-        max_noise_level=250,
-        output_size=64,
-        scale_factor=1.0,
+            self,
+            model_config,
+            linear_start,
+            linear_end,
+            timesteps=1000,
+            max_noise_level=250,
+            output_size=64,
+            scale_factor=1.0,
     ):
         super().__init__()
         self.max_noise_level = max_noise_level
@@ -939,12 +938,12 @@ class LowScaleEncoder(nn.Module):
         self.scale_factor = scale_factor
 
     def register_schedule(
-        self,
-        beta_schedule="linear",
-        timesteps=1000,
-        linear_start=1e-4,
-        linear_end=2e-2,
-        cosine_s=8e-3,
+            self,
+            beta_schedule="linear",
+            timesteps=1000,
+            linear_start=1e-4,
+            linear_end=2e-2,
+            cosine_s=8e-3,
     ):
         betas = make_beta_schedule(
             beta_schedule,
@@ -962,7 +961,7 @@ class LowScaleEncoder(nn.Module):
         self.linear_start = linear_start
         self.linear_end = linear_end
         assert (
-            alphas_cumprod.shape[0] == self.num_timesteps
+                alphas_cumprod.shape[0] == self.num_timesteps
         ), "alphas have to be defined for each timestep"
 
         to_torch = partial(torch.tensor, dtype=torch.float32)
@@ -989,9 +988,9 @@ class LowScaleEncoder(nn.Module):
     def q_sample(self, x_start, t, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
         return (
-            extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
-            + extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape)
-            * noise
+                extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
+                + extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape)
+                * noise
         )
 
     def forward(self, x):
@@ -1034,7 +1033,7 @@ class ConcatTimestepEmbedderND(AbstractEmbModel):
 
 class GaussianEncoder(Encoder, AbstractEmbModel):
     def __init__(
-        self, weight: float = 1.0, flatten_output: bool = True, *args, **kwargs
+            self, weight: float = 1.0, flatten_output: bool = True, *args, **kwargs
     ):
         super().__init__(*args, **kwargs)
         self.posterior = DiagonalGaussianRegularizer()

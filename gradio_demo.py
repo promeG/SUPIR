@@ -1,5 +1,6 @@
 import argparse
 import datetime
+import gc
 import os
 import shutil
 import tempfile
@@ -8,7 +9,7 @@ import time
 import traceback
 from datetime import datetime
 from typing import Tuple, List, Any, Dict
-import gc
+
 import einops
 import gradio as gr
 import numpy as np
@@ -17,21 +18,21 @@ import torch
 from PIL import Image
 from PIL import PngImagePlugin
 from gradio_imageslider import ImageSlider
-from SUPIR.utils.rename_meta import rename_meta_key
 
 import ui_helpers
 from SUPIR.models.SUPIR_model import SUPIRModel
 from SUPIR.util import HWC3, upscale_image, convert_dtype
 from SUPIR.util import create_SUPIR_model
+from SUPIR.utils import shared
 from SUPIR.utils.compare import create_comparison_video
 from SUPIR.utils.face_restoration_helper import FaceRestoreHelper
 from SUPIR.utils.model_fetch import get_model
+from SUPIR.utils.rename_meta import rename_meta_key
 from SUPIR.utils.status_container import StatusContainer, MediaData
 from llava.llava_agent import LLavaAgent
-from SUPIR.utils import shared, devices
 from ui_helpers import is_video, extract_video, compile_video, is_image, get_video_params, printt
 
-SUPIR_REVISION = "v42"
+SUPIR_REVISION = "v43"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1', help="IP address for the server to listen on.")
@@ -42,6 +43,7 @@ parser.add_argument("--loading_half_params", action='store_true', default=False,
                     help="Enable loading model parameters in half precision to reduce memory usage.")
 parser.add_argument("--fp8", action='store_true', default=False, 
                     help="Enable loading model parameters in FP8 precision to reduce memory usage.")
+parser.add_argument("--autotune", action='store_true', default=False, help="Automatically set precision parameters based on the amount of VRAM available.")
 parser.add_argument("--fast_load_sd", action='store_true', default=False, 
                     help="Enable fast loading of model state dict and to prevents unnecessary memory allocation.")
 parser.add_argument("--use_tile_vae", action='store_true', default=True,
@@ -84,17 +86,23 @@ meta_upload = False
 bf16_supported = torch.cuda.is_bf16_supported()
 total_vram = 100000
 auto_unload = False
-if torch.cuda.is_available():
+if torch.cuda.is_available() and args.autotune:
     # Get total GPU memory
     total_vram = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
-    print("Total VRAM: ", total_vram, "GB")
-    # If total VRAM <= 12GB, set auto_unload to True
+    print("Autotune enabled, Total VRAM: ", total_vram, "GB")
+    if not args.fp8:
+        args.fp8 = total_vram <= 8
     auto_unload = total_vram <= 12
 
     if total_vram <= 24:
-        args.loading_half_params = True
-        args.use_tile_vae = True
-        print("Loading half params")
+        if not args.loading_half_params:
+            args.loading_half_params = True
+        if not args.use_tile_vae:
+            args.use_tile_vae = True
+    print("Auto Unload: ", auto_unload)
+    print("Half Params: ", args.loading_half_params)
+    print("FP8: ", args.fp8)
+    print("Tile VAE: ", args.use_tile_vae)
 
 shared.opts.half_mode = args.loading_half_params  
 shared.opts.fast_load_sd = args.fast_load_sd
@@ -377,7 +385,7 @@ def clear_llava():
 def all_to_cpu_background():
     if args.dont_move_cpu:
         return
-    global face_helper, model, llava_agent
+    global face_helper, model, llava_agent, auto_unload
     printt("Moving all to CPU")
     if face_helper is not None:
         face_helper = face_helper.to('cpu')
@@ -387,7 +395,8 @@ def all_to_cpu_background():
         model.move_to('cpu')
         printt("Model moved to CPU")
     if llava_agent is not None:
-        unload_llava()
+        if auto_unload:
+            unload_llava()
     gc.collect()
     torch.cuda.empty_cache()
     printt("All moved to CPU")
@@ -581,7 +590,6 @@ def read_image_metadata(image_path):
 
 
 def update_elements(status_label):
-    print(f"Label changed: {status_label}")
     prompt_el = gr.update()
     result_gallery_el = gr.update(height=400)
     result_slider_el = gr.update(height=400)
@@ -595,13 +603,11 @@ def update_elements(status_label):
         if len(output_data) == 1:
             image_data = output_data[0]
             caption = image_data.caption
-            print(f"Caption: {caption}")
             prompt_el = gr.update(value=caption)
             if len(image_data.outputs) > 0:
                 outputs = image_data.outputs
                 params = image_data.metadata_list
                 if len(params) != len(outputs):
-                    print("Mismatch in outputs and metadata list, using defaults.")
                     params = [status_container.process_params] * len(outputs)
                 first_output = outputs[0]
                 first_params = params[0]
@@ -661,8 +667,6 @@ def populate_slider_single():
 
 
 def populate_gallery():
-    # Fetch the image at http://www.marketingtool.online/en/face-generator/img/faces/avatar-1151ce9f4b2043de0d2e3b7826127998.jpg
-    # and use it as the input image
     temp_path = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
     temp_path.write(requests.get(
         "http://www.marketingtool.online/en/face-generator/img/faces/avatar-1151ce9f4b2043de0d2e3b7826127998.jpg").content)

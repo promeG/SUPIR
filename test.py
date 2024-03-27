@@ -66,7 +66,7 @@ for img_pth in os.listdir(args.img_dir):
     img_name = os.path.splitext(img_pth)[0]
 
     LQ_img = Image.open(os.path.join(args.img_dir, img_pth))
-    LQ_img, h0, w0 = PIL2Tensor(LQ_img, upsacle=args.upscale, min_size=args.min_size)
+    LQ_img, h0, w0 = PIL2Tensor(LQ_img, upscale=args.upscale, min_size=args.min_size)
     LQ_img = LQ_img.unsqueeze(0).to(SUPIR_device)[:, :3, :, :]
 
     # step 1: Pre-denoise for LLaVA)
