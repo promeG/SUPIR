@@ -227,5 +227,6 @@ def autocast(disable=False, _dtype=torch.bfloat16):
 
     if has_mps() or cuda_no_autocast():
         return manual_cast(dtype)
-
-    return torch.autocast("cuda")
+    else:
+        return torch.autocast("cuda", dtype=_dtype, enabled=True)
+    

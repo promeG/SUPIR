@@ -46,7 +46,7 @@ parser.add_argument("--fp8", action='store_true', default=False,
 parser.add_argument("--autotune", action='store_true', default=False, help="Automatically set precision parameters based on the amount of VRAM available.")
 parser.add_argument("--fast_load_sd", action='store_true', default=False, 
                     help="Enable fast loading of model state dict and to prevents unnecessary memory allocation.")
-parser.add_argument("--use_tile_vae", action='store_true', default=True,
+parser.add_argument("--use_tile_vae", action='store_true', default=False,
                     help="Enable tiling for the VAE to handle larger images with limited memory.")
 parser.add_argument("--outputs_folder_button", type=str, default=False, help="Outputs Folder Button Will Be Enabled")
 parser.add_argument("--use_fast_tile", action='store_true', default=False,
