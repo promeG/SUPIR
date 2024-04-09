@@ -4,6 +4,7 @@ import random
 import torch
 from pytorch_lightning import seed_everything
 
+from SUPIR.utils import devices, sd_model_initialization
 from SUPIR.utils.colorfix import wavelet_reconstruction, adaptive_instance_normalization
 from SUPIR.utils.tilevae import VAEHook
 from sgm.models.diffusion import DiffusionEngine
@@ -47,14 +48,16 @@ class SUPIRModel(DiffusionEngine):
 
     @torch.no_grad()
     def encode_first_stage(self, x):
-        with torch.autocast("cuda", dtype=self.ae_dtype):
+        #with torch.autocast("cuda", dtype=self.ae_dtype):
+        with devices.autocast(_dtype = self.ae_dtype):
             z = self.first_stage_model.encode(x)
         z.mul_(self.scale_factor)  # In-place multiplication
         return z
 
     @torch.no_grad()
     def encode_first_stage_with_denoise(self, x, use_sample=True, is_stage1=False):
-        with torch.autocast("cuda", dtype=self.ae_dtype):
+        with devices.autocast(_dtype = self.ae_dtype):
+        #with torch.autocast("cuda", dtype=self.ae_dtype):
             h = self.first_stage_model.denoise_encoder_s1(x) if is_stage1 else self.first_stage_model.denoise_encoder(x)
             moments = self.first_stage_model.quant_conv(h)
             posterior = DiagonalGaussianDistribution(moments)
@@ -65,7 +68,8 @@ class SUPIRModel(DiffusionEngine):
     @torch.no_grad()
     def decode_first_stage(self, z):
         z = 1.0 / self.scale_factor * z
-        with torch.autocast("cuda", dtype=self.ae_dtype):
+        #with torch.autocast("cuda", dtype=self.ae_dtype):
+        with devices.autocast(_dtype = self.ae_dtype):
             out = self.first_stage_model.decode(z)
         return out.float()
 
@@ -127,7 +131,7 @@ class SUPIRModel(DiffusionEngine):
         if self.previous_sampler_config != new_sampler_config or self.sampler is None:
             self.sampler_config = new_sampler_config
             printt("Instantiating sampler.")
-            del self.sampler
+            del self.sampler         
             self.sampler = instantiate_from_config(self.sampler_config)
             self.previous_sampler_config = new_sampler_config
             printt("Instantiated sampler.")
@@ -135,7 +139,8 @@ class SUPIRModel(DiffusionEngine):
         if seed == -1:
             seed = random.randint(0, 65535)
         seed_everything(seed)
-
+        
+        
         printt("Encoding first stage with denoise...")
         _z = self.encode_first_stage_with_denoise(x, use_sample=False)
         printt("Encoded first stage with denoise...")
@@ -193,7 +198,8 @@ class SUPIRModel(DiffusionEngine):
 
         if not isinstance(p[0], list):
             batch['txt'] = [''.join([_p, p_p]) for _p in p]
-            with torch.cuda.amp.autocast(dtype=self.ae_dtype):
+            with devices.without_autocast() if devices.unet_needs_upcast else devices.autocast(_dtype = self.ae_dtype):
+            #with torch.cuda.amp.autocast(dtype=self.ae_dtype):
                 c, uc = self.conditioner.get_unconditional_conditioning(batch, batch_uc)
         else:
             assert len(p) == 1, 'Support bs=1 only for local prompt conditioning.'
@@ -201,7 +207,8 @@ class SUPIRModel(DiffusionEngine):
             c = []
             for i, p_tile in enumerate(p_tiles):
                 batch['txt'] = [''.join([p_tile, p_p])]
-                with torch.cuda.amp.autocast(dtype=self.ae_dtype):
+                with devices.autocast(_dtype = self.ae_dtype):
+                #with torch.cuda.amp.autocast(dtype=self.ae_dtype):
                     if i == 0:
                         _c, uc = self.conditioner.get_unconditional_conditioning(batch, batch_uc)
                     else:
