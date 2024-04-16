@@ -996,10 +996,13 @@ def supir_process(inputs: List[MediaData], a_prompt, n_prompt, num_samples,
                 else:
                     result = _bg[0]
 
-            # I couldnt make this part
-            # if not apply_bg and apply_face:
-            #    face_helper.get_inverse_affine(None)
-            #    result = face_helper.paste_faces_to_input_image(upsample_img=lq)
+            if not apply_bg and apply_face:                
+                face_helper.get_inverse_affine(None)
+
+                # the image the face helper is using is already scaled to the desired resolution using lanzcos
+                # I believe the output from this function should be just the original image but with only the face
+                # restoration. 
+                result = face_helper.paste_faces_to_input_image()
 
             if not apply_face and not apply_bg:
                 caption = [img_prompt]
