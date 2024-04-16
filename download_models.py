@@ -17,10 +17,19 @@ def download_file(url, folder_path, file_name=None):
     """Download a file from a given URL to a specified folder with an optional file name."""
     local_filename = file_name if file_name else url.split('/')[-1]
     local_filepath = os.path.join(folder_path, local_filename)
-    print(f'Downloading {url} to: {local_filepath}')
+
+    # Check if file exists and verify its size
     if os.path.exists(local_filepath):
         print(f'File already exists: {local_filepath}')
-        return
+        expected_size = get_remote_file_size(url)
+        actual_size = os.path.getsize(local_filepath)
+        if expected_size == actual_size:
+            print(f'File is already downloaded and verified: {local_filepath}')
+            return
+        else:
+            print(f'File size mismatch, redownloading: {local_filepath}')
+
+    print(f'Downloading {url} to: {local_filepath}')
     # Stream download to handle large files
     with requests.get(url, stream=True) as r:
         r.raise_for_status()
@@ -37,6 +46,13 @@ def download_file(url, folder_path, file_name=None):
         print('ERROR, something went wrong')
     else:
         print(f'Downloaded {local_filename} to {folder_path}')
+
+
+def get_remote_file_size(url):
+    """Get the size of a file at a remote URL."""
+    with requests.head(url) as r:
+        size = int(r.headers.get('content-length', 0))
+    return size
 
 
 # Define the folders and their corresponding file URLs with optional file names

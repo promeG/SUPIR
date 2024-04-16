@@ -28,11 +28,13 @@ from SUPIR.utils.compare import create_comparison_video
 from SUPIR.utils.face_restoration_helper import FaceRestoreHelper
 from SUPIR.utils.model_fetch import get_model
 from SUPIR.utils.rename_meta import rename_meta_key
+from SUPIR.utils.ckpt_downloader import download_checkpoint_handler, download_checkpoint
+
 from SUPIR.utils.status_container import StatusContainer, MediaData
 from llava.llava_agent import LLavaAgent
 from ui_helpers import is_video, extract_video, compile_video, is_image, get_video_params, printt
 
-SUPIR_REVISION = "v44"
+SUPIR_REVISION = "v46"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1', help="IP address for the server to listen on.")
@@ -1631,6 +1633,25 @@ with (block):
                 meta_image = gr.Image(type="filepath", label="Output Image", elem_id="output_image", visible=True, height="42.5vh", sources=["upload"])
                 meta_video = gr.Video(label="Output Video", elem_id="output_video", visible=False, height="42.5vh")
                 metadata_output = gr.Textbox(label="Image Metadata", lines=25, max_lines=50, elem_id="output_metadata")
+
+    with gr.Tab("Download Checkpoints"):
+        gr.Markdown("## Download Checkpoints")
+        with gr.Row():
+            with gr.Column():
+                model_choice = gr.Dropdown(
+                    choices=["SDXL 1.0 Base", "RealVisXL_V4", "Animagine XL V3.1"],
+                    label="Select Model"
+                )
+            with gr.Column():      
+                download_button = gr.Button("Download")
+                download_output = gr.Textbox(label="Download Status")
+
+        model_download_dir = gr.Textbox(value=args.ckpt_dir, visible=False)  # Invisible Textbox
+        download_button.click(
+            fn=download_checkpoint_handler,
+            inputs=[model_choice, model_download_dir],
+            outputs=download_output
+        )
 
     with gr.Tab("About"):
         gr.HTML(f"<H2>SUPIR Version {SUPIR_REVISION}</H2>")
