@@ -37,7 +37,8 @@ def download_checkpoint_handler(model_choice, ckpt_dir):
     model_mapping = {
         "SDXL 1.0 Base": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0_0.9vae.safetensors",
         "RealVisXL_V4": "https://huggingface.co/SG161222/RealVisXL_V4.0/resolve/main/RealVisXL_V4.0.safetensors",
-        "Animagine XL V3.1": "https://civitai.com/api/download/models/403131?type=Model&format=SafeTensor&size=full&fp=fp16&token=5577db242d28f46030f55164cdd2da5d"
+        "Animagine XL V3.1": "https://civitai.com/api/download/models/403131?type=Model&format=SafeTensor&size=full&fp=fp16&token=5577db242d28f46030f55164cdd2da5d",
+		"Juggernaut XL V10" : "https://huggingface.co/RunDiffusion/Juggernaut-X-v10/resolve/main/Juggernaut-X-RunDiffusion-NSFW.safetensors"
     }
 
     if model_choice in model_mapping:
