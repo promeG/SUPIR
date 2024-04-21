@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import traceback
+import json
 from datetime import datetime
 from typing import Tuple, List, Any, Dict
 
@@ -34,7 +35,7 @@ from SUPIR.utils.status_container import StatusContainer, MediaData
 from llava.llava_agent import LLavaAgent
 from ui_helpers import is_video, extract_video, compile_video, is_image, get_video_params, printt
 
-SUPIR_REVISION = "v46"
+SUPIR_REVISION = "v47"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1', help="IP address for the server to listen on.")
@@ -141,6 +142,7 @@ status_container = StatusContainer()
 
 # Store this globally so we can update variables more easily
 elements_dict = {}
+extra_info_elements = {}
 
 single_process = False
 is_processing = False
@@ -158,7 +160,6 @@ slider_html = """
   </div>
 </div>
 """
-
 
 def refresh_models_click():
     new_model_list = list_models()
@@ -1611,6 +1612,102 @@ with (block):
                         video_width_textbox = gr.Textbox(label="Width", value="1920")
                         video_height_textbox = gr.Textbox(label="Height", value="1080")
 
+                with gr.Accordion("Presets", open=True):
+                    presets_dir = os.path.join(os.path.dirname(__file__), 'presets')
+                    if not os.path.exists(presets_dir):
+                        os.makedirs(presets_dir)
+
+                    def save_preset(preset_name, config):
+                    #Save the current configuration to a file.
+                        file_path = os.path.join(presets_dir, f"{preset_name}.json")
+                        with open(file_path, 'w') as f:
+                            json.dump(config, f)
+                        return "Preset saved successfully!"
+
+                    def load_preset(preset_name):
+                        global elements_dict, extra_info_elements
+                        file_path = os.path.join(presets_dir, f"{preset_name}.json")
+                        if not os.path.exists(file_path):
+                            print("Don't forget to select a valid preset file")
+                            return "Error"
+                        with open(file_path, 'r') as f:
+                            # Load the JSON string from the file
+                            json_string = json.load(f)
+                            # Decode the JSON string into a dictionary
+                            config = json.loads(json_string)
+
+                        updates = [f"Loaded config from {file_path}"]
+                        for key, value in config.items():
+                            # Check if the key is in the dictionary of UI elements
+                            if key in elements_dict:
+                                # Update the value of the element if it exists
+                                elements_dict[key].value = value
+                                updates.append(gr.update(value=value))
+                            elif key in extra_info_elements:
+                                # Update the value of the element in extra_info_elements if it exists
+                                extra_info_elements[key].value = value
+                                updates.append(gr.update(value=value))
+                            else:
+                                # Append an update with no changes if the key is not recognized
+                                updates.append(gr.update())
+
+                        return updates
+
+
+                    def get_preset_list():
+                        """List all saved presets."""
+                        return [f.replace('.json', '') for f in os.listdir(presets_dir) if f.endswith('.json')]
+
+                    def serialize_settings(ui_elements):
+                        global elements_dict, extra_info_elements
+                        serialized_dict = {}
+
+                        # Process elements in elements_dict
+                        last_index = 0
+                        for e_key, element_index in zip(elements_dict.keys(), range(len(ui_elements))):
+                            element = ui_elements[element_index]
+                            last_index = element_index 
+                            # Check if the element has a 'value' attribute, otherwise use it directly
+                            if hasattr(element, 'value'):
+                                serialized_dict[e_key] = element.value
+                            else:
+                                serialized_dict[e_key] = element
+
+                        # Process extra elements in extra_info_elements
+                        last_index=last_index+1
+                        for extra_key, extra_element in extra_info_elements.items():
+                            # Check if the extra element has a 'value' attribute, otherwise use directly
+                            element = ui_elements[last_index]
+                            last_index=last_index+1
+                            if hasattr(element, 'value'):
+                                serialized_dict[extra_key] = element.value
+                            else:
+                                serialized_dict[extra_key] = element
+
+                        # Convert dictionary to JSON string
+                        json_settings = json.dumps(serialized_dict)
+                        return json_settings
+
+                    def save_current_preset(preset_name,*elements):
+                        if preset_name:
+                            preset_path = os.path.join(presets_dir, f"{preset_name}.json")
+                            settings = serialize_settings(elements)
+                            with open(preset_path, 'w') as f:
+                                json.dump(settings, f)
+                            return "Preset saved successfully!"
+                        return "Please provide a valid preset name."
+
+                    def list_presets():
+                        presets = [file.split('.')[0] for file in os.listdir(presets_dir) if file.endswith('.json')]
+                        return presets
+
+                    with gr.Row():
+                        preset_name_textbox = gr.Textbox(label="Preset Name")
+                        save_preset_button = gr.Button("Save Current Preset")
+                        load_preset_dropdown = gr.Dropdown(label="Load Preset", choices=list_presets())
+                        load_preset_button = gr.Button("Load Preset")
+                        refresh_presets_button = gr.Button("Refresh Presets")
+
     with gr.Tab("Restored Faces"):
         with gr.Row():
             face_gallery = gr.Gallery(label='Faces', show_label=False, elem_id="gallery2")
@@ -1655,6 +1752,7 @@ with (block):
             inputs=[model_choice, model_download_dir],
             outputs=download_output
         )
+
 
     with gr.Tab("About"):
         gr.HTML(f"<H2>SUPIR Version {SUPIR_REVISION}</H2>")
@@ -1740,6 +1838,8 @@ with (block):
 
     elements = list(elements_dict.values())
 
+    elements_extra = list(extra_info_elements.values())
+
     start_single_button.click(fn=start_single_process, inputs=elements, outputs=output_label,
                               show_progress=True, queue=True)
     start_batch_button.click(fn=start_batch_process, inputs=elements, outputs=output_label,
@@ -1793,6 +1893,11 @@ with (block):
                                    outputs=target_res_textbox)
     video_end_time_number.change(fn=update_end_time, inputs=[src_input_file, upscale_slider, video_end_time_number],
                                  outputs=target_res_textbox)
+
+    save_preset_button.click(fn=save_current_preset, inputs=[preset_name_textbox]+elements+elements_extra, outputs=[output_label])
+    refresh_presets_button.click(fn=lambda: gr.update(choices=list_presets()), inputs=[], outputs=[load_preset_dropdown])
+    load_preset_button.click(fn=load_preset, inputs=[load_preset_dropdown],outputs=[output_label] + elements+elements_extra,
+                show_progress=True, queue=True)
 
 
     def do_nothing():
