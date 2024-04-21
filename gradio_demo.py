@@ -1642,7 +1642,7 @@ with (block):
         with gr.Row():
             with gr.Column():
                 model_choice = gr.Dropdown(
-                    choices=["SDXL 1.0 Base", "RealVisXL_V4", "Animagine XL V3.1"],
+                    choices=["SDXL 1.0 Base", "RealVisXL_V4", "Animagine XL V3.1", "Juggernaut XL V10"],
                     label="Select Model"
                 )
             with gr.Column():      
