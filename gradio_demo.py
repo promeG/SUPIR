@@ -1,4 +1,5 @@
 import argparse
+from asyncio.windows_events import NULL
 import datetime
 import gc
 import os
@@ -1642,7 +1643,10 @@ with (block):
                             if key in elements_dict:
                                 # Update the value of the element if it exists
                                 elements_dict[key].value = value
-                                updates.append(gr.update(value=value))
+                                if(key == "src_file"):
+                                    elements_dict[key].value = None
+                                updates.append(gr.update(value=elements_dict[key].value))
+
                             elif key in extra_info_elements:
                                 # Update the value of the element in extra_info_elements if it exists
                                 extra_info_elements[key].value = value
