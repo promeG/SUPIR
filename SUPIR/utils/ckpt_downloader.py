@@ -24,6 +24,8 @@ def download_checkpoint(model_url, model_name, ckpt_dir):
                 file.write(chunk)
                 total_downloaded += len(chunk)
                 elapsed_time = time.time() - start_time
+                if elapsed_time == 0:
+                    elapsed_time = 0.1  # avoid division by zero by setting a minimum elapsed time
                 speed = (total_downloaded / elapsed_time) / (1024 ** 2)  # convert bytes/sec to MB/sec
                 done = int(50 * total_downloaded / total_size)
                 print(f"\rDownloading {model_name}: [{'#' * done}{'.' * (50 - done)}] {total_downloaded * 100 / total_size:.2f}% @ {speed:.2f} MB/s", end='', flush=True)
