@@ -35,7 +35,7 @@ from SUPIR.utils.status_container import StatusContainer, MediaData
 from llava.llava_agent import LLavaAgent
 from ui_helpers import is_video, extract_video, compile_video, is_image, get_video_params, printt
 
-SUPIR_REVISION = "v47"
+SUPIR_REVISION = "v48"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--ip", type=str, default='127.0.0.1', help="IP address for the server to listen on.")
@@ -1640,11 +1640,13 @@ with (block):
                         for key, value in config.items():
                             # Check if the key is in the dictionary of UI elements
                             if key in elements_dict:
-                                # Update the value of the element if it exists
-                                elements_dict[key].value = value
-                                if(key == "src_file"):
-                                    elements_dict[key].value = None
-                                updates.append(gr.update(value=elements_dict[key].value))
+                                if key == "src_file":
+                                    # Skip updating the "src_file" element
+                                    updates.append(gr.update())
+                                else:
+                                    # Update the value of the element if it exists and is not "src_file"
+                                    elements_dict[key].value = value
+                                    updates.append(gr.update(value=elements_dict[key].value))
 
                             elif key in extra_info_elements:
                                 # Update the value of the element in extra_info_elements if it exists
