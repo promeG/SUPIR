@@ -38,13 +38,13 @@ webdataset==0.2.86
 fastapi
 diffusers
 facexlib==0.3.0
-torch==2.1.0
-torchvision
-torchaudio==2.1.0
+#torch==2.1.0
+#torchvision
+#torchaudio==2.1.0
 huggingface_hub
 xformers
 # Only for windows
-https://huggingface.co/MonsterMMORPG/SECourses/resolve/main/triton-2.1.0-cp310-cp310-win_amd64.whl ; platform_system == "Windows"
---extra-index-url https://download.pytorch.org/whl/cu121
+#https://huggingface.co/MonsterMMORPG/SECourses/resolve/main/triton-2.1.0-cp310-cp310-win_amd64.whl ; platform_system == "Windows"
+#--extra-index-url https://download.pytorch.org/whl/cu121
 
 
