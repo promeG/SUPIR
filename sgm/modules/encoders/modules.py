@@ -523,7 +523,10 @@ class FrozenOpenCLIPEmbedder2(AbstractEmbModel):
     ):
         super().__init__()
         assert layer in self.LAYERS
-        model_path = get_model(SDXL_CLIP2_CKPT_PTH)
+        # model_path = get_model(SDXL_CLIP2_CKPT_PTH)
+        # HCT
+        model_path = '/opt/stable-diffusion-webui/ai/open_clip_pytorch_model.bin'
+        # HCT END
         model, _, _ = open_clip.create_model_and_transforms(
             arch,
             device=torch.device("cpu"),

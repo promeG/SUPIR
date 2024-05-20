@@ -73,7 +73,10 @@ def create_SUPIR_model(config_path, weight_dtype='bf16', supir_sign=None, device
     # Handling SUPIR checkpoints based on the sign
     if supir_sign:
         assert supir_sign in ['F', 'Q'], "supir_sign must be either 'F' or 'Q'"
-        ckpt_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", f"v0{supir_sign}.ckpt"))
+        # ckpt_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models", f"v0{supir_sign}.ckpt"))
+        # HCT
+        ckpt_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "ai", f"v0{supir_sign}.ckpt"))
+        # HCT END
         load_to_device(ckpt_path)
 
     model.sampler = sampler
